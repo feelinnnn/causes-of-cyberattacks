@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.ipynb_checkpoints/
+# Raw/processed data are large & some licenses forbid redistribution -> keep out of git
+data/raw/**
+data/cleaned/**
+data/integrated/**
+data/analytical/**
+!data/**/.gitkeep
+docker/logs/
+spark-warehouse/
+metastore_db/
