@@ -12,3 +12,7 @@ data/analytical/**
 docker/logs/
 spark-warehouse/
 metastore_db/
+
+# VCDB & VERIS data (large json datasets)
+VCDB/
+veris/
