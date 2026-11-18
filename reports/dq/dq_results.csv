@@ -1,0 +1,120 @@
+rule_id,dimension,table,column,check,severity,n_checked,n_failed,pct_failed,status,detail
+R01,uniqueness,country_reference,iso3,key is unique,error,252,0,0.0,PASS,
+R01,uniqueness,cloudflare_country_year,"iso3,year",key is unique,error,753,0,0.0,PASS,
+R01,uniqueness,cloudflare_l3_vectors,"iso3,year,vector",key is unique,error,2523,0,0.0,PASS,
+R01,uniqueness,cloudflare_attack_pairs,"year,origin_iso2,target_iso2",key is unique,error,600,0,0.0,PASS,
+R01,uniqueness,cloudflare_timeseries_weekly,"iso2,request_year,week_start",key is unique,error,40386,0,0.0,PASS,
+R01,uniqueness,wb_econ,"iso3,year",key is unique,error,1519,0,0.0,PASS,
+R01,uniqueness,wb_digital,"iso3,year",key is unique,error,1519,0,0.0,PASS,
+R01,uniqueness,wb_governance,"iso3,year",key is unique,error,1519,0,0.0,PASS,
+R01,uniqueness,vdem_country_year,"iso3,year",key is unique,error,1232,0,0.0,PASS,
+R01,uniqueness,gci_country_edition,"iso3,edition",key is unique,error,563,0,0.0,PASS,
+R01,uniqueness,bgp_country_year,"iso3,year",key is unique,error,1645,0,0.0,PASS,
+R02,referential integrity,cloudflare_country_year,iso3,code exists in country_reference,error,753,0,0.0,PASS,
+R02,referential integrity,cloudflare_l3_vectors,iso3,code exists in country_reference,error,2523,0,0.0,PASS,
+R02,referential integrity,wb_econ,iso3,code exists in country_reference,error,1519,0,0.0,PASS,
+R02,referential integrity,wb_digital,iso3,code exists in country_reference,error,1519,0,0.0,PASS,
+R02,referential integrity,wb_governance,iso3,code exists in country_reference,error,1519,0,0.0,PASS,
+R02,referential integrity,vdem_country_year,iso3,code exists in country_reference,error,1232,0,0.0,PASS,
+R02,referential integrity,gci_country_edition,iso3,code exists in country_reference,error,563,0,0.0,PASS,
+R02,referential integrity,bgp_country_year,iso3,code exists in country_reference,error,1645,0,0.0,PASS,
+R02,referential integrity,cloudflare_attack_pairs,target_iso3,code exists in country_reference,error,600,0,0.0,PASS,
+R02,referential integrity,cloudflare_attack_pairs,origin_iso3,code exists in country_reference,error,594,0,0.0,PASS,
+R02,referential integrity,cloudflare_timeseries_weekly,iso3,code exists in country_reference,error,39909,0,0.0,PASS,
+R03,validity,cloudflare_country_year,target_ddos_percent,"value in [0, 100]",error,567,0,0.0,PASS,
+R03,validity,cloudflare_country_year,origin_ddos_percent,"value in [0, 100]",error,600,0,0.0,PASS,
+R03,validity,cloudflare_country_year,target_l7_mitigated_percent,"value in [0, 100]",error,600,0,0.0,PASS,
+R03,validity,cloudflare_country_year,origin_l7_mitigated_percent,"value in [0, 100]",error,600,0,0.0,PASS,
+R03,validity,cloudflare_country_year,http_traffic_percent,"value in [0, 100]",error,500,0,0.0,PASS,
+R03,validity,cloudflare_country_year,ipv4_percent,"value in [0, 100]",error,500,0,0.0,PASS,
+R03,validity,cloudflare_country_year,ipv6_percent,"value in [0, 100]",error,500,0,0.0,PASS,
+R03,validity,cloudflare_country_year,bot_traffic_percent,"value in [0, 100]",error,499,0,0.0,PASS,
+R03,validity,cloudflare_country_year,tls_1_3_percent,"value in [0, 100]",error,499,0,0.0,PASS,
+R03,validity,cloudflare_country_year,origin_mitig_waf_percent,"value in [0, 100]",error,744,0,0.0,PASS,
+R03,validity,cloudflare_country_year,origin_mitig_ddos_percent,"value in [0, 100]",error,744,0,0.0,PASS,
+R03,validity,cloudflare_country_year,origin_mitig_bot_percent,"value in [0, 100]",error,744,0,0.0,PASS,
+R03,validity,cloudflare_country_year,l3_syn_percent,"value in [0, 100]",error,254,0,0.0,PASS,
+R03,validity,cloudflare_country_year,l3_udp_percent,"value in [0, 100]",error,254,0,0.0,PASS,
+R03,validity,cloudflare_l3_vectors,percent,"value in [0, 100]",error,2523,0,0.0,PASS,
+R03,validity,cloudflare_attack_pairs,attack_share_percent,"value in [0, 100]",error,600,0,0.0,PASS,
+R03,validity,cloudflare_timeseries_weekly,trend_scaled,"value in [0, 1]",error,40386,0,0.0,PASS,
+R03,validity,wb_econ,gdp_per_capita,"value in [0, inf]",error,1455,0,0.0,PASS,
+R03,validity,wb_econ,population,"value in [0, inf]",error,1519,0,0.0,PASS,
+R03,validity,wb_econ,secure_internet_servers_per_1m,"value in [0, inf]",error,1499,0,0.0,PASS,
+R03,validity,wb_digital,internet_users_pct,"value in [0, 100]",error,1280,0,0.0,PASS,
+R03,validity,wb_digital,broadband_subs_per_100,"value in [0, 100]",error,1316,0,0.0,PASS,
+R03,validity,wb_governance,gov_effectiveness,"value in [-2.5, 2.5]",error,1435,0,0.0,PASS,
+R03,validity,wb_governance,rule_of_law,"value in [-2.5, 2.5]",error,1448,0,0.0,PASS,
+R03,validity,vdem_country_year,v2x_polyarchy,"value in [0, 1]",error,1232,0,0.0,PASS,
+R03,validity,vdem_country_year,v2x_libdem,"value in [0, 1]",error,1232,0,0.0,PASS,
+R03,validity,vdem_country_year,v2x_rule,"value in [0, 1]",error,1232,0,0.0,PASS,
+R03,validity,gci_country_edition,gci_score_100,"value in [0, 100]",error,563,0,0.0,PASS,
+R03,validity,bgp_country_year,routed_asn_count,"value in [0, inf]",error,1645,0,0.0,PASS,
+R03,validity,bgp_country_year,routed_prefix_count,"value in [0, inf]",error,1645,0,0.0,PASS,
+R03,validity,bgp_country_year,ipv4_slash24_count,"value in [0, inf]",error,1645,0,0.0,PASS,
+R04,consistency,cloudflare_country_year,ipv4_percent+ipv6_percent,sum = 100 (+/-0.5),warn,500,0,0.0,PASS,
+R04,consistency,cloudflare_country_year,origin_mitig_*,sum <= 100.5,warn,744,0,0.0,PASS,median sum = 93.9 (rest = other mitigation products)
+R04,consistency,cloudflare_country_year,target_ddos_percent,world shares sum to 100 (+/-1) per year,warn,3,0,0.0,PASS,"sums: 2022=100.0, 2023=100.0, 2024=100.0"
+R04,consistency,cloudflare_country_year,origin_ddos_percent,world shares sum to 100 (+/-1) per year,warn,3,0,0.0,PASS,"sums: 2022=100.0, 2023=100.0, 2024=100.0"
+R04,consistency,cloudflare_country_year,target_l7_mitigated_percent,world shares sum to 100 (+/-1) per year,warn,3,0,0.0,PASS,"sums: 2022=100.0, 2023=100.0, 2024=100.0"
+R04,consistency,cloudflare_country_year,origin_l7_mitigated_percent,world shares sum to 100 (+/-1) per year,warn,3,0,0.0,PASS,"sums: 2022=100.0, 2023=100.0, 2024=100.0"
+R04,consistency,gci_country_edition,gci_score_100,2024 score = sum of pillars,warn,176,0,0.0,PASS,
+R09,reliability,vdem_country_year,v2smgovcapsec_nr,coders > 3,warn,1232,10,0.81,WARN,"few-coder country-years: FJI, GNQ, SSD, VUT"
+R09,reliability,vdem_country_year,v2smprivcon_nr,coders > 3,warn,1203,324,26.93,WARN,"few-coder country-years: AFG, AGO, ARE, AZE, BDI, BGD, BLR, BTN, CAF, COD, COG, COM, CUB, DJI, DOM, ECU, EGY, ERI, ETH, FJI, GAB, GIN, GNB, GNQ, GTM, GUY, HRV, HTI, IRN, IRQ, JAM, KGZ, KHM, LAO, LBR, LBY, MDA, MDG, MDV, MMR, "
+R05,completeness,country_year,http_traffic_percent,missing <= 30% (year 2022),warn,217,217,100.0,WARN,
+R05,completeness,country_year,ipv4_percent,missing <= 30% (year 2022),warn,217,217,100.0,WARN,
+R05,completeness,country_year,ipv6_percent,missing <= 30% (year 2022),warn,217,217,100.0,WARN,
+R05,completeness,country_year,bot_traffic_percent,missing <= 30% (year 2022),warn,217,217,100.0,WARN,
+R05,completeness,country_year,tls_1_3_percent,missing <= 30% (year 2022),warn,217,217,100.0,WARN,
+R05,completeness,country_year,l3_top_vector,missing <= 30% (year 2022),warn,217,217,100.0,WARN,
+R05,completeness,country_year,l3_top_vector,missing <= 30% (year 2023),warn,217,96,44.24,WARN,
+R05,completeness,country_year,l3_top_vector,missing <= 30% (year 2024),warn,217,88,40.55,WARN,
+R05,completeness,country_year,l3_syn_percent,missing <= 30% (year 2022),warn,217,217,100.0,WARN,
+R05,completeness,country_year,l3_syn_percent,missing <= 30% (year 2023),warn,217,96,44.24,WARN,
+R05,completeness,country_year,l3_syn_percent,missing <= 30% (year 2024),warn,217,88,40.55,WARN,
+R05,completeness,country_year,l3_udp_percent,missing <= 30% (year 2022),warn,217,217,100.0,WARN,
+R05,completeness,country_year,l3_udp_percent,missing <= 30% (year 2023),warn,217,96,44.24,WARN,
+R05,completeness,country_year,l3_udp_percent,missing <= 30% (year 2024),warn,217,88,40.55,WARN,
+R05,completeness,country_year,broadband_subs_per_100,missing <= 30% (year 2024),warn,217,66,30.41,WARN,
+R05,completeness,country_year,gci_tier,missing <= 30% (year 2022),warn,217,217,100.0,WARN,
+R05,completeness,country_year,gci_tier,missing <= 30% (year 2023),warn,217,217,100.0,WARN,
+R05,completeness,country_year,(all other columns),missing <= 30% per year,warn,651,0,0.0,PASS,columns not listed passed
+R06,join coverage,country_year,has_cloudflare,matched >= 80% of World Bank rows,warn,651,3,0.46,PASS,matched 99.5%
+R06,join coverage,country_year,has_wb_econ,matched >= 80% of World Bank rows,warn,651,0,0.0,PASS,matched 100.0%
+R06,join coverage,country_year,has_wb_digital,matched >= 80% of World Bank rows,warn,651,0,0.0,PASS,matched 100.0%
+R06,join coverage,country_year,has_wb_governance,matched >= 80% of World Bank rows,warn,651,0,0.0,PASS,matched 100.0%
+R06,join coverage,country_year,has_vdem,matched >= 80% of World Bank rows,warn,651,126,19.35,PASS,matched 80.6%
+R06,join coverage,country_year,has_bgp,matched >= 80% of World Bank rows,warn,651,6,0.92,PASS,matched 99.1%
+R06,join coverage,country_year,has_gci,matched >= 80% of World Bank rows,warn,651,72,11.06,PASS,matched 88.9%
+R07,cross-source consistency,country_year,http_traffic_percent ~ internet users,Spearman rho >= 0.7 (year 2022),warn,0,0,0.0,PASS,not enough overlapping rows to test
+R07,cross-source consistency,country_year,http_traffic_percent ~ internet users,Spearman rho >= 0.7 (year 2023),warn,181,0,0.0,PASS,rho = 0.844
+R07,cross-source consistency,country_year,http_traffic_percent ~ internet users,Spearman rho >= 0.7 (year 2024),warn,182,0,0.0,PASS,rho = 0.844
+R08,plausibility,country_year,ipv4_percent,robust |z| <= 5.0,warn,500,16,3.2,WARN,"e.g. SJM-2024, UMI-2024, IND-2024, IND-2023, MYS-2024"
+R08,plausibility,country_year,ipv6_percent,robust |z| <= 5.0,warn,500,16,3.2,WARN,"e.g. SJM-2024, UMI-2024, IND-2024, IND-2023, MYS-2024"
+R08,plausibility,country_year,tls_1_3_percent,robust |z| <= 5.0,warn,499,14,2.81,WARN,"e.g. CCK-2023, BVT-2023, BVT-2024, HMD-2023, SGS-2023"
+R08,plausibility,country_year,l3_udp_percent,robust |z| <= 5.0,warn,254,7,2.76,WARN,"e.g. IRL-2024, IRL-2023, TTO-2024, SVK-2023, REU-2024"
+R08,plausibility,country_year,fdi_net_inflows,robust |z| <= 5.0,warn,584,32,5.48,WARN,"e.g. LUX-2022, MLT-2024, CYM-2023, CYP-2024, MLT-2022"
+R08,plausibility,country_year,v2smpolcap,robust |z| <= 5.0,warn,528,3,0.57,WARN,"e.g. CHN-2022, CHN-2023, CHN-2024"
+R10,timeliness,country_year,target_ddos_percent,has value in 2024 for >= 80% of countries,warn,217,40,18.43,PASS,available 81.6%
+R10,timeliness,country_year,origin_ddos_percent,has value in 2024 for >= 80% of countries,warn,217,25,11.52,PASS,available 88.5%
+R10,timeliness,country_year,origin_mitig_ddos_percent,has value in 2024 for >= 80% of countries,warn,217,1,0.46,PASS,available 99.5%
+R10,timeliness,country_year,http_traffic_percent,has value in 2024 for >= 80% of countries,warn,217,1,0.46,PASS,available 99.5%
+R10,timeliness,country_year,gdp_per_capita,has value in 2024 for >= 80% of countries,warn,217,17,7.83,PASS,available 92.2%
+R10,timeliness,country_year,internet_users_pct,has value in 2024 for >= 80% of countries,warn,217,35,16.13,PASS,available 83.9%
+R10,timeliness,country_year,broadband_subs_per_100,has value in 2024 for >= 80% of countries,warn,217,66,30.41,WARN,available 69.6%
+R10,timeliness,country_year,gov_effectiveness,has value in 2024 for >= 80% of countries,warn,217,12,5.53,PASS,available 94.5%
+R10,timeliness,country_year,v2smgovcapsec,has value in 2024 for >= 80% of countries,warn,217,42,19.35,PASS,available 80.6%
+R10,timeliness,country_year,routed_asn_count,has value in 2024 for >= 80% of countries,warn,217,2,0.92,PASS,available 99.1%
+R10,timeliness,country_year,gci_score_100,has value in 2024 for >= 80% of countries,warn,217,24,11.06,PASS,available 88.9%
+R11,documentation,country_reference,(all),every column documented in data_dictionary.yaml,warn,1,0,0.0,PASS,undocumented=[] not_in_data=[]
+R11,documentation,cloudflare_country_year,(all),every column documented in data_dictionary.yaml,warn,1,0,0.0,PASS,undocumented=[] not_in_data=[]
+R11,documentation,cloudflare_l3_vectors,(all),every column documented in data_dictionary.yaml,warn,1,0,0.0,PASS,undocumented=[] not_in_data=[]
+R11,documentation,cloudflare_attack_pairs,(all),every column documented in data_dictionary.yaml,warn,1,0,0.0,PASS,undocumented=[] not_in_data=[]
+R11,documentation,cloudflare_timeseries_weekly,(all),every column documented in data_dictionary.yaml,warn,1,0,0.0,PASS,undocumented=[] not_in_data=[]
+R11,documentation,wb_econ,(all),every column documented in data_dictionary.yaml,warn,1,0,0.0,PASS,undocumented=[] not_in_data=[]
+R11,documentation,wb_digital,(all),every column documented in data_dictionary.yaml,warn,1,0,0.0,PASS,undocumented=[] not_in_data=[]
+R11,documentation,wb_governance,(all),every column documented in data_dictionary.yaml,warn,1,0,0.0,PASS,undocumented=[] not_in_data=[]
+R11,documentation,vdem_country_year,(all),every column documented in data_dictionary.yaml,warn,1,0,0.0,PASS,undocumented=[] not_in_data=[]
+R11,documentation,gci_country_edition,(all),every column documented in data_dictionary.yaml,warn,1,0,0.0,PASS,undocumented=[] not_in_data=[]
+R11,documentation,bgp_country_year,(all),every column documented in data_dictionary.yaml,warn,1,0,0.0,PASS,undocumented=[] not_in_data=[]
+R11,documentation,country_year,(all),every column documented in data_dictionary.yaml,warn,1,0,0.0,PASS,undocumented=[] not_in_data=[]
