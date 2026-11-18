@@ -313,6 +313,8 @@ ISO2_TO_ISO3 = {'AD': {'iso3': 'AND', 'name': 'Andorra'},
 def iso2_to_iso3_and_name(iso2: str, fallback_name: str = "") -> tuple[str, str]:
     """แปลงรหัสประเทศ ISO-2 (Cloudflare) เป็น ISO-3 (World Bank) และชื่อประเทศ"""
     iso2 = (iso2 or "").upper().strip()
+    if iso2 == "GR":
+        return "GRC", fallback_name or "Greece"
     if iso2 in FALLBACK_COUNTRIES:
         return FALLBACK_COUNTRIES[iso2]["iso3"], fallback_name or FALLBACK_COUNTRIES[iso2]["name"]
     if iso2 in ISO2_TO_ISO3:
@@ -343,10 +345,9 @@ def cf_request(endpoint: str, params: dict, max_retries: int = 4, quiet_400: boo
                 continue
             if res.status_code == 401:
                 raise RuntimeError(
-                    "[401 Unauthorized] CLOUDFLARE_API_TOKEN ไม่ถูกต้องหรือหมดอายุ กรุณาตรวจสอบในไฟล์ .env"
+                    "[401 Unauthorized] CLOUDFLARE_API_TOKEN ไม่ถูกต้อง หมดอายุ หรือติด IP Restriction กรุณาตรวจสอบในไฟล์ .env"
                 )
             if res.status_code == 400 and quiet_400:
-                # กรณีช่วงปีที่ขอเก่ากว่าที่ Cloudflare Radar เริ่มเก็บข้อมูล (เช่น ก่อนปลายปี 2020-2022)
                 return {}
             res.raise_for_status()
             data = res.json()
@@ -368,6 +369,60 @@ def year_date_params(year: int) -> dict:
     }
 
 
+def extract_meta_daterange(res: dict) -> tuple[str | None, str | None]:
+    """ดึง startTime และ endTime จริงจาก result.meta.dateRange ของ Cloudflare Radar API"""
+    if not isinstance(res, dict):
+        return None, None
+    meta = res.get("meta") or {}
+    dr = meta.get("dateRange")
+    if isinstance(dr, dict):
+        return dr.get("startTime"), dr.get("endTime")
+    if isinstance(dr, list) and dr and isinstance(dr[0], dict):
+        return dr[0].get("startTime"), dr[0].get("endTime")
+    return None, None
+
+
+def fetch_top_location_With_adaptive_limit(
+    endpoint: str, year: int, extra_params: dict | None = None
+) -> tuple[dict[str, float], dict[str, str], tuple[str | None, str | None]]:
+    """
+    ดึงข้อมูลจาก top/locations โดยลอง limit สูงสุดที่ API รองรับอัตโนมัติ (200 -> 100)
+    ป้องกันปัญหาส่ง limit=250 แล้วติด HTTP 400
+    """
+    extra = extra_params or {}
+    val_map: dict[str, float] = {}
+    name_map: dict[str, str] = {}
+    meta_dr: tuple[str | None, str | None] = (None, None)
+
+    for lim in (200, 100):
+        params = {**year_date_params(year), **extra, "limit": lim}
+        res = cf_request(endpoint, params)
+        top_list = res.get("top_0", [])
+        if top_list:
+            meta_dr = extract_meta_daterange(res)
+            for item in top_list:
+                iso2 = (
+                    item.get("targetCountryAlpha2")
+                    or item.get("originCountryAlpha2")
+                    or item.get("clientCountryAlpha2")
+                    or item.get("location")
+                    or ""
+                ).upper()
+                name = (
+                    item.get("targetCountryName")
+                    or item.get("originCountryName")
+                    or item.get("clientCountryName")
+                    or ""
+                )
+                if iso2:
+                    val_map[iso2] = float(item.get("value", 0.0))
+                    if name:
+                        name_map[iso2] = name
+            break
+
+    return val_map, name_map, meta_dr
+
+
 def fetch_all_radar_countries() -> dict[str, str]:
     """ดึงรายชื่อประเทศทั้งหมดที่รองรับจาก Cloudflare Radar (entities/locations)"""
     res = cf_request("entities/locations", {"limit": 300, "format": "json"})
@@ -375,100 +430,168 @@ def fetch_all_radar_countries() -> dict[str, str]:
     for loc in res.get("locations", []):
         iso2 = (loc.get("alpha2") or "").upper().strip()
         name = loc.get("name") or ""
-        if len(iso2) == 2:
+        if len(iso2) == 2 and iso2 not in ("AP", "EU"):
             countries[iso2] = name
     return countries
 
 
-def fetch_global_top_locations(year: int, limit: int = 250) -> tuple[dict, dict, dict, dict]:
+def fetch_global_top_locations(year: int) -> dict:
     """
-    ดึงข้อมูลระดับ Global ต่อปี สำหรับทุกประเทศ (limit=250):
-      1. target_ddos_percent จาก attacks/layer7/top/locations/target
-      2. origin_ddos_percent จาก attacks/layer7/top/locations/origin
-      3. http_traffic_percent จาก http/top/locations
-    คืนค่า: (target_map, origin_map, http_map, country_names_map)
+    ดึงข้อมูลระดับ Global ต่อปี แก้ไขปัญหาข้อที่ 1 และข้อที่ 3:
+      1.1 target_ddos_percent (กรอง mitigationProduct=DDOS เฉพาะ DDoS จริง)
+      1.2 origin_ddos_percent (กรอง mitigationProduct=DDOS เฉพาะ DDoS จริง)
+      1.3 target_l7_mitigated_percent (ไม่กรอง = รวมทุกกลไก WAF + DDoS + Bot + IP Reputation)
+      1.4 origin_l7_mitigated_percent (ไม่กรอง = รวมทุกกลไก WAF + DDoS + Bot + IP Reputation)
+      2.1 http_traffic_percent จาก http/top/locations
     """
-    base_params = {**year_date_params(year), "limit": limit}
+    target_ddos_map, n1, dr_t_ddos = fetch_top_location_With_adaptive_limit(
+        "attacks/layer7/top/locations/target", year, {"mitigationProduct": "DDOS"}
+    )
+    origin_ddos_map, n2, dr_o_ddos = fetch_top_location_With_adaptive_limit(
+        "attacks/layer7/top/locations/origin", year, {"mitigationProduct": "DDOS"}
+    )
+    target_l7_map, n3, dr_t_l7 = fetch_top_location_With_adaptive_limit(
+        "attacks/layer7/top/locations/target", year
+    )
+    origin_l7_map, n4, dr_o_l7 = fetch_top_location_With_adaptive_limit(
+        "attacks/layer7/top/locations/origin", year
+    )
+    http_map, n5, dr_http = fetch_top_location_With_adaptive_limit("http/top/locations", year)
 
-    target_map = {}
-    origin_map = {}
-    http_map = {}
-    names_map = {}
+    names_map = {**n5, **n4, **n3, **n2, **n1}
+    meta_start, meta_end = dr_t_l7 if dr_t_l7[0] else (dr_http if dr_http[0] else dr_t_ddos)
 
-    # 1. Target DDoS Locations (attacks/layer7/top/locations/target)
-    res_target = cf_request("attacks/layer7/top/locations/target", base_params)
-    for item in res_target.get("top_0", []):
-        iso2 = (
-            item.get("targetCountryAlpha2")
-            or item.get("clientCountryAlpha2")
-            or item.get("location")
-            or ""
-        ).upper()
-        name = item.get("targetCountryName") or item.get("clientCountryName") or ""
-        if iso2:
-            target_map[iso2] = float(item.get("value", 0.0))
-            if name:
-                names_map[iso2] = name
+    return {
+        "target_ddos_map": target_ddos_map,
+        "origin_ddos_map": origin_ddos_map,
+        "target_l7_map": target_l7_map,
+        "origin_l7_map": origin_l7_map,
+        "http_map": http_map,
+        "names_map": names_map,
+        "meta_date_start": meta_start,
+        "meta_date_end": meta_end,
+    }
 
-    # 2. Origin DDoS Locations (attacks/layer7/top/locations/origin)
-    res_origin = cf_request("attacks/layer7/top/locations/origin", base_params)
-    for item in res_origin.get("top_0", []):
-        iso2 = (
-            item.get("originCountryAlpha2")
-            or item.get("clientCountryAlpha2")
-            or item.get("location")
-            or ""
-        ).upper()
-        name = item.get("originCountryName") or item.get("clientCountryName") or ""
-        if iso2:
-            origin_map[iso2] = float(item.get("value", 0.0))
-            if name and iso2 not in names_map:
-                names_map[iso2] = name
 
-    # 3. HTTP Traffic Top Locations (http/top/locations)
-    res_http = cf_request("http/top/locations", base_params)
-    for item in res_http.get("top_0", []):
-        iso2 = (item.get("clientCountryAlpha2") or item.get("location") or "").upper()
-        name = item.get("clientCountryName") or ""
-        if iso2:
-            http_map[iso2] = float(item.get("value", 0.0))
-            if name and iso2 not in names_map:
-                names_map[iso2] = name
+def fetch_outage_annotations(year: int, limit: int = 200) -> list[dict]:
+    """
+    ดึง Annotations เหตุการณ์ผิดปกติ/Outage จาก radar/annotations/outages
+    เพื่อใช้มาร์กช่วงเวลาที่ข้อมูลทราฟฟิกอาจผิดปกติใน Data Quality Report
+    """
+    params = {**year_date_params(year), "limit": limit}
+    res = cf_request("annotations/outages", params)
+    annotations = res.get("annotations") or []
+    rows = []
+    for ann in annotations:
+        locs = ann.get("locations") or []
+        asns = ann.get("asns") or []
+        rows.append(
+            {
+                "year": year,
+                "id": ann.get("id"),
+                "event_type": ann.get("eventType"),
+                "outage_type": (ann.get("outage") or {}).get("outageType"),
+                "outage_cause": (ann.get("outage") or {}).get("outageCause"),
+                "start_date": ann.get("startDate"),
+                "end_date": ann.get("endDate"),
+                "locations_iso2": ",".join(str(x) for x in locs),
+                "asns": ",".join(str(x) for x in asns),
+                "description": ann.get("description"),
+                "scope": ann.get("scope"),
+            }
+        )
+    return rows
 
-    return target_map, origin_map, http_map, names_map
+
+def add_compositional_and_dq_columns(df: pd.DataFrame, min_traffic_threshold: float = 0.01) -> pd.DataFrame:
+    """
+    แก้ไขปัญหาข้อที่ 2 (Compositional Data):
+    - คำนวณดัชนีความเข้มข้น (Intensity Index = share_attack / share_http_traffic)
+    - คำนวณ Log-Ratio = ln((share_attack + eps) / (share_http_traffic + eps))
+    - สร้างตัวแปรสถานะ is_above_min_traffic (http_traffic_percent >= 0.01%) เพื่อกรองประเทศเล็กที่ค่าแกว่งสูง
+    """
+    import math
+
+    eps = 1e-4
+    df = df.copy()
+
+    # แปลงคอลัมน์ตัวเลขให้เป็น float
+    num_cols = [
+        "target_ddos_percent",
+        "origin_ddos_percent",
+        "target_l7_mitigated_percent",
+        "origin_l7_mitigated_percent",
+        "http_traffic_percent",
+    ]
+    for col in num_cols:
+        if col not in df.columns:
+            df[col] = None
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df["is_above_min_traffic"] = df["http_traffic_percent"] >= min_traffic_threshold
+
+    def calc_intensity(row, attack_col):
+        h = row["http_traffic_percent"]
+        a = row[attack_col]
+        if pd.isna(h) or pd.isna(a) or h < min_traffic_threshold:
+            return None
+        return round(float(a) / float(h), 6)
+
+    def calc_log_ratio(row, attack_col):
+        h = row["http_traffic_percent"]
+        a = row[attack_col]
+        if pd.isna(h) or pd.isna(a):
+            return None
+        return round(math.log((float(a) + eps) / (float(h) + eps)), 6)
+
+    df["target_ddos_intensity"] = df.apply(lambda r: calc_intensity(r, "target_ddos_percent"), axis=1)
+    df["origin_ddos_intensity"] = df.apply(lambda r: calc_intensity(r, "origin_ddos_percent"), axis=1)
+    df["target_l7_intensity"] = df.apply(lambda r: calc_intensity(r, "target_l7_mitigated_percent"), axis=1)
+    df["origin_l7_intensity"] = df.apply(lambda r: calc_intensity(r, "origin_l7_mitigated_percent"), axis=1)
+
+    df["target_ddos_log_ratio"] = df.apply(lambda r: calc_log_ratio(r, "target_ddos_percent"), axis=1)
+    df["origin_ddos_log_ratio"] = df.apply(lambda r: calc_log_ratio(r, "origin_ddos_percent"), axis=1)
+    df["target_l7_log_ratio"] = df.apply(lambda r: calc_log_ratio(r, "target_l7_mitigated_percent"), axis=1)
+    df["origin_l7_log_ratio"] = df.apply(lambda r: calc_log_ratio(r, "origin_l7_mitigated_percent"), axis=1)
+
+    return df
 
 
 def fetch_attack_flow_pairs(year: int, limit: int = 200) -> list[dict]:
     """
     4.2 attack_flow_pair: ดึงคู่ประเทศต้นทาง -> ปลายทาง จาก attacks/layer7/top/attacks
     """
-    params = {**year_date_params(year), "limit": limit}
-    res = cf_request("attacks/layer7/top/attacks", params)
     rows = []
-    for idx, item in enumerate(res.get("top_0", []), start=1):
-        orig_iso2 = (item.get("originCountryAlpha2") or "").upper()
-        orig_name = item.get("originCountryName") or ""
-        targ_iso2 = (item.get("targetCountryAlpha2") or "").upper()
-        targ_name = item.get("targetCountryName") or ""
+    for lim in (limit, 100):
+        params = {**year_date_params(year), "limit": lim}
+        res = cf_request("attacks/layer7/top/attacks", params)
+        top_list = res.get("top_0", [])
+        if top_list:
+            for idx, item in enumerate(top_list, start=1):
+                orig_iso2 = (item.get("originCountryAlpha2") or "").upper()
+                orig_name = item.get("originCountryName") or ""
+                targ_iso2 = (item.get("targetCountryAlpha2") or "").upper()
+                targ_name = item.get("targetCountryName") or ""
 
-        orig_iso3, orig_name = iso2_to_iso3_and_name(orig_iso2, orig_name)
-        targ_iso3, targ_name = iso2_to_iso3_and_name(targ_iso2, targ_name)
+                orig_iso3, orig_name = iso2_to_iso3_and_name(orig_iso2, orig_name)
+                targ_iso3, targ_name = iso2_to_iso3_and_name(targ_iso2, targ_name)
 
-        rows.append(
-            {
-                "year": year,
-                "rank": item.get("rank", idx),
-                "origin_country_iso2": orig_iso2,
-                "origin_country_code": orig_iso3,
-                "origin_country_name": orig_name,
-                "target_country_iso2": targ_iso2,
-                "target_country_code": targ_iso3,
-                "target_country_name": targ_name,
-                "attack_flow_pair": f"{orig_iso2} -> {targ_iso2}",
-                "attack_flow_pair_iso3": f"{orig_iso3} -> {targ_iso3}",
-                "attack_share_percent": float(item.get("value", 0.0)),
-            }
-        )
+                rows.append(
+                    {
+                        "year": year,
+                        "rank": item.get("rank", idx),
+                        "origin_country_iso2": orig_iso2,
+                        "origin_country_code": orig_iso3,
+                        "origin_country_name": orig_name,
+                        "target_country_iso2": targ_iso2,
+                        "target_country_code": targ_iso3,
+                        "target_country_name": targ_name,
+                        "attack_flow_pair": f"{orig_iso2} -> {targ_iso2}",
+                        "attack_flow_pair_iso3": f"{orig_iso3} -> {targ_iso3}",
+                        "attack_share_percent": float(item.get("value", 0.0)),
+                    }
+                )
+            break
     return rows
 
 
@@ -526,14 +649,12 @@ def get_case_insensitive(d: dict, *keys: str, default: float | None = None) -> f
 def fetch_country_metrics(
     iso2: str,
     year: int,
-    target_map: dict,
-    origin_map: dict,
-    http_map: dict,
-    names_map: dict,
+    global_data: dict,
     top_flows: list[dict],
 ) -> tuple[dict, list[dict]]:
     """ดึงตัวแปรครบทั้ง 4 กลุ่มสำหรับ 1 ประเทศ ใน 1 ปี"""
     params = {**year_date_params(year), "location": iso2}
+    names_map = global_data["names_map"]
     iso3, country_name = iso2_to_iso3_and_name(iso2, names_map.get(iso2, ""))
 
     # กลุ่มที่ 2: ipv4_percent และ ipv6_percent (http/summary/ip_version)
@@ -551,7 +672,6 @@ def fetch_country_metrics(
     tls_1_3_pct = get_case_insensitive(tls_summary, "TLS 1.3", "TLSv1.3", "TLS_1_3")
 
     # 3.3 mitigation_waf_percent / mitigation_ddos_percent / mitigation_bot_percent
-    # (attacks/layer7/summary/mitigation_product)
     mit_summary = cf_request("attacks/layer7/summary/mitigation_product", params).get("summary_0", {})
     mit_waf_pct = get_case_insensitive(mit_summary, "WAF")
     mit_ddos_pct = get_case_insensitive(mit_summary, "DDOS", "DDoS")
@@ -572,8 +692,8 @@ def fetch_country_metrics(
         top_l3_vector = None
         l3_vector_json = None
 
-    l3_syn_pct = get_case_insensitive(l3_summary, "SYN", "SYN_FLOOD", "TCP_SYN")
-    l3_udp_pct = get_case_insensitive(l3_summary, "UDP", "UDP_FLOOD")
+    l3_syn_pct = get_case_insensitive(l3_summary, "SYN Flood", "SYN", "SYN_FLOOD", "TCP Flood")
+    l3_udp_pct = get_case_insensitive(l3_summary, "UDP Flood", "UDP", "UDP_FLOOD")
 
     # คู่โจมตีอันดับ 1 ที่เกี่ยวข้องกับประเทศนี้ (จาก attacks/layer7/top/attacks)
     country_flows = [
@@ -590,16 +710,20 @@ def fetch_country_metrics(
     weekly_mean = round(sum(weekly_values) / len(weekly_values), 6) if weekly_values else None
 
     return {
-        # --- Join Keys ---
+        # --- Join Keys & Metadata ---
         "country_code": iso3,
         "country_name": country_name,
         "country_iso2": iso2,
         "year": year,
-        # --- 1. กลุ่มตัวแปรตาม (Target Variables - Y) ---
-        "target_ddos_percent": target_map.get(iso2),
-        "origin_ddos_percent": origin_map.get(iso2),
+        "meta_date_start": global_data["meta_date_start"],
+        "meta_date_end": global_data["meta_date_end"],
+        # --- 1. กลุ่มตัวแปรตาม (Target Variables - Y: แยกเฉพาะ DDoS vs รวมทุกกลไก L7) ---
+        "target_ddos_percent": global_data["target_ddos_map"].get(iso2),
+        "origin_ddos_percent": global_data["origin_ddos_map"].get(iso2),
+        "target_l7_mitigated_percent": global_data["target_l7_map"].get(iso2),
+        "origin_l7_mitigated_percent": global_data["origin_l7_map"].get(iso2),
         # --- 2. กลุ่มตัวแปรปรับบรรทัดฐานและตรวจสอบคุณภาพ (Normalization & DQ) ---
-        "http_traffic_percent": http_map.get(iso2),
+        "http_traffic_percent": global_data["http_map"].get(iso2),
         "ipv4_percent": ipv4_pct,
         "ipv6_percent": ipv6_pct,
         # --- 3. กลุ่มตัวแปรต้นเชิงพฤติกรรม (Predictor Features - X) ---
@@ -619,12 +743,82 @@ def fetch_country_metrics(
     }, ts_rows
 
 
+def patch_existing_csv(existing_csv: Path, out_dir: Path):
+    """
+    โหมดซ่อมและอัปเกรดไฟล์ CSV ที่มีอยู่แล้วอย่างรวดเร็ว (~10 วินาที, ไม่ต้องยิงรายประเทศใหม่ 4,500 ครั้ง):
+      1. ดึง target_ddos_percent & origin_ddos_percent (mitigationProduct=DDOS)
+      2. ดึง target_l7_mitigated_percent & origin_l7_mitigated_percent (รวมทุกกลไก L7)
+      3. คำนวณ Intensity Index และ Log-Ratio (แก้ปัญหา Compositional Data)
+      4. ดึง Outage Annotations (radar/annotations/outages) สำหรับ Data Quality Report
+      5. บันทึก meta.dateRange ของแต่ละปี
+    """
+    print(f"พบไฟล์ข้อมูลเดิมที่: {existing_csv}")
+    print("กำลังรันโหมด Fast Upgrade (~10 วินาที) เพื่อเติมข้อมูล Global Top Locations, Intensity/Log-Ratio และ Outage Annotations...")
+
+    df = pd.read_csv(existing_csv, keep_default_na=False)
+    # แปลงค่าว่างกลับเป็น None สำหรับคอลัมน์ตัวเลข แต่คง 'NA' ของนามิเบียใน country_iso2 ไว้
+    for col in df.columns:
+        if col not in ("country_code", "country_name", "country_iso2"):
+            df[col] = df[col].replace("", None)
+
+    df.loc[df["country_iso2"] == "GR", "country_code"] = "GRC"
+    df["year"] = df["year"].astype(int)
+
+    years = sorted(df["year"].unique().tolist())
+    all_outages = []
+
+    for yr in years:
+        print(f"  -> ดึงข้อมูล Global Top Locations (DDOS & All L7) และ Outage Annotations ปี {yr}...")
+        gdata = fetch_global_top_locations(yr)
+        outages = fetch_outage_annotations(yr)
+        all_outages.extend(outages)
+
+        mask = df["year"] == yr
+        df.loc[mask, "meta_date_start"] = gdata["meta_date_start"]
+        df.loc[mask, "meta_date_end"] = gdata["meta_date_end"]
+        df.loc[mask, "target_ddos_percent"] = df.loc[mask, "country_iso2"].map(gdata["target_ddos_map"])
+        df.loc[mask, "origin_ddos_percent"] = df.loc[mask, "country_iso2"].map(gdata["origin_ddos_map"])
+        df.loc[mask, "target_l7_mitigated_percent"] = df.loc[mask, "country_iso2"].map(gdata["target_l7_map"])
+        df.loc[mask, "origin_l7_mitigated_percent"] = df.loc[mask, "country_iso2"].map(gdata["origin_l7_map"])
+
+        # เติม http_traffic_percent หากปีใดยังว่างและ API มีข้อมูล
+        if gdata["http_map"]:
+            existing_http = pd.to_numeric(df.loc[mask, "http_traffic_percent"], errors="coerce")
+            mapped_http = df.loc[mask, "country_iso2"].map(gdata["http_map"])
+            df.loc[mask, "http_traffic_percent"] = existing_http.combine_first(mapped_http)
+
+    # คำนวณ Compositional Intensity & Log-Ratio
+    df = add_compositional_and_dq_columns(df, min_traffic_threshold=0.01)
+
+    # ตัดรหัสภูมิภาค AP และ EU ออกจากการเป็นประเทศ
+    df = df[~df["country_iso2"].isin(["AP", "EU"])].sort_values(by=["country_code", "year"]).reset_index(drop=True)
+    df.to_csv(existing_csv, index=False, encoding="utf-8-sig")
+    print(f"[สำเร็จ 1/2] อัปเดตไฟล์หลักเรียบร้อยที่: {existing_csv} ({len(df)} แถว, {len(df.columns)} คอลัมน์)")
+
+    if all_outages:
+        outages_csv = out_dir / "cloudflare_annotations_outages.csv"
+        pd.DataFrame(all_outages).to_csv(outages_csv, index=False, encoding="utf-8-sig")
+        print(f"[สำเร็จ 2/2] บันทึกตาราง Outage Annotations สำหรับ DQ Report ที่: {outages_csv} ({len(all_outages)} แถว)")
+
+
 def main():
+    import sys
+
     # ตรวจสอบ Token ก่อนเริ่ม
     _ = get_headers()
 
-    # ลองดึงตั้งแต่ปี 2018-2024 (ปีที่ Cloudflare Radar ยังไม่เปิดให้บริการหรือไม่มีข้อมูลจะถูกข้ามอัตโนมัติ)
-    years_to_fetch = list(range(2018, 2025))
+    raw_base = Path(__file__).resolve().parent.parent / "raw"
+    cf_subfolder = raw_base / "sourceA" / "cloudeflare_rader"
+    output_dir = cf_subfolder if cf_subfolder.is_dir() else raw_base
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_main_csv = output_dir / "cloudflare_radar_source_a.csv"
+    if existing_main_csv.is_file() and "--full" not in sys.argv:
+        patch_existing_csv(existing_main_csv, output_dir)
+        return
+
+    # กรณีรันใหม่ทั้งหมด (--full หรือยังไม่มีไฟล์เดิม): เริ่มดึงตั้งแต่ปี 2022-2024 (Radar 2.0 เปิดตัว ก.ย. 2022)
+    years_to_fetch = [2022, 2023, 2024]
 
     print("กำลังดึงรายชื่อประเทศทั้งหมดจาก Cloudflare Radar...")
     all_radar_countries = fetch_all_radar_countries()
@@ -632,69 +826,80 @@ def main():
     main_records = []
     all_flow_records = []
     all_timeseries_records = []
+    all_outage_records = []
 
     for year in years_to_fetch:
         print(f"\n=== เริ่มตรวจสอบและดึงข้อมูล Cloudflare Radar (Source A) ประจำปี {year} ===")
 
-        target_map, origin_map, http_map, names_map = fetch_global_top_locations(year, limit=250)
+        global_data = fetch_global_top_locations(year)
         flow_rows = fetch_attack_flow_pairs(year, limit=200)
         global_ts = fetch_weekly_timeseries(year, location_iso2=None)
+        outage_rows = fetch_outage_annotations(year, limit=200)
 
-        # หากทั้ง 3 ตารางระดับโลกไม่มีข้อมูลเลย แปลว่าปีนั้น (เช่น 2018-2019) Cloudflare Radar ยังไม่มีข้อมูล
-        if not target_map and not origin_map and not http_map and not global_ts:
+        if (
+            not global_data["target_l7_map"]
+            and not global_data["origin_l7_map"]
+            and not global_data["http_map"]
+            and not global_ts
+        ):
             print(f"  [ข้ามปี {year}] Cloudflare Radar API ไม่มีข้อมูลย้อนหลังสำหรับปี {year}")
             continue
 
         all_flow_records.extend(flow_rows)
         all_timeseries_records.extend(global_ts)
+        all_outage_records.extend(outage_rows)
 
-        # รวมรายชื่อประเทศทั้งหมดที่พบในปีนั้น หรือจากรายชื่อประเทศทั้งหมดของ Radar
         countries_for_year = sorted(
-            set(all_radar_countries.keys())
-            | set(http_map.keys())
-            | set(target_map.keys())
-            | set(origin_map.keys())
+            (
+                set(all_radar_countries.keys())
+                | set(global_data["http_map"].keys())
+                | set(global_data["target_l7_map"].keys())
+                | set(global_data["origin_l7_map"].keys())
+            )
+            - {"AP", "EU"}
         )
-        names_map = {**all_radar_countries, **names_map}
+        global_data["names_map"] = {**all_radar_countries, **global_data["names_map"]}
 
         print(f"  -> พบข้อมูลสำหรับปี {year} จำนวน {len(countries_for_year)} ประเทศ")
 
         for idx, iso2 in enumerate(countries_for_year, start=1):
-            cname = names_map.get(iso2, iso2)
+            cname = global_data["names_map"].get(iso2, iso2)
             print(f"  [{idx}/{len(countries_for_year)}] กำลังดึงข้อมูลประเทศ: {iso2} ({cname}) ปี {year}...")
             rec, country_ts = fetch_country_metrics(
                 iso2=iso2,
                 year=year,
-                target_map=target_map,
-                origin_map=origin_map,
-                http_map=http_map,
-                names_map=names_map,
+                global_data=global_data,
                 top_flows=flow_rows,
             )
             main_records.append(rec)
             all_timeseries_records.extend(country_ts)
             time.sleep(0.15)
 
-    output_dir = Path(__file__).resolve().parent.parent / "raw"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     if main_records:
-        df_main = pd.DataFrame(main_records).sort_values(by=["country_code", "year"]).reset_index(drop=True)
+        df_main = pd.DataFrame(main_records)
+        df_main = add_compositional_and_dq_columns(df_main, min_traffic_threshold=0.01)
+        df_main = df_main.sort_values(by=["country_code", "year"]).reset_index(drop=True)
         main_csv = output_dir / "cloudflare_radar_source_a.csv"
         df_main.to_csv(main_csv, index=False, encoding="utf-8-sig")
-        print(f"\n[สำเร็จ 1/3] บันทึกตารางหลัก Country-Year ที่: {main_csv} ({len(df_main)} แถว)")
+        print(f"\n[สำเร็จ 1/4] บันทึกตารางหลัก Country-Year ที่: {main_csv} ({len(df_main)} แถว)")
 
     if all_flow_records:
         df_flows = pd.DataFrame(all_flow_records)
         flows_csv = output_dir / "cloudflare_attack_flow_pairs.csv"
         df_flows.to_csv(flows_csv, index=False, encoding="utf-8-sig")
-        print(f"[สำเร็จ 2/3] บันทึกตาราง Attack Flow Pairs ที่: {flows_csv} ({len(df_flows)} แถว)")
+        print(f"[สำเร็จ 2/4] บันทึกตาราง Attack Flow Pairs ที่: {flows_csv} ({len(df_flows)} แถว)")
 
     if all_timeseries_records:
         df_ts = pd.DataFrame(all_timeseries_records)
         ts_csv = output_dir / "cloudflare_timeseries_weekly.csv"
         df_ts.to_csv(ts_csv, index=False, encoding="utf-8-sig")
-        print(f"[สำเร็จ 3/3] บันทึกตาราง Weekly Timeseries ที่: {ts_csv} ({len(df_ts)} แถว)")
+        print(f"[สำเร็จ 3/4] บันทึกตาราง Weekly Timeseries ที่: {ts_csv} ({len(df_ts)} แถว)")
+
+    if all_outage_records:
+        df_outages = pd.DataFrame(all_outage_records)
+        outages_csv = output_dir / "cloudflare_annotations_outages.csv"
+        df_outages.to_csv(outages_csv, index=False, encoding="utf-8-sig")
+        print(f"[สำเร็จ 4/4] บันทึกตาราง Outage Annotations ที่: {outages_csv} ({len(df_outages)} แถว)")
 
 
 if __name__ == "__main__":
