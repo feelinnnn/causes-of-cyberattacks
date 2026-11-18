@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+data/warehouse/*.db
+data/input/V-Dem-CY-Full+Others-v16.csv
+logs/
+airflow.cfg
+airflow.db
+*.pid
