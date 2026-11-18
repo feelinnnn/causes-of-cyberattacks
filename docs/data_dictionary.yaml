@@ -1,0 +1,258 @@
+# Data dictionary: single source of truth for every column in data/cleaned/ and data/integrated/.
+# People write: description, unit, missing (what NaN means). Code adds: type, non-null %, min/max.
+# verify: true = meaning taken from memory/secondary source; check against the official codebook.
+# Generate the readable version:  PYTHONPATH=src python -m cyber_pipeline.quality.data_dictionary
+
+sources:
+  A_cloudflare:
+    provider: Cloudflare Radar API
+    url: https://developers.cloudflare.com/radar/
+    license: CC BY-NC 4.0 (API data; non-commercial, attribution required)
+    period: 2022-2024 (HTTP metrics 2023-2024 only)
+    raw: data/raw/sourceA/cloudeflare_rader/
+    fetched: "main table 2026-11-18 (re-fetched, patch mode); attack pairs and weekly series 2026-11-17"
+    fetch_script: data/data_API/Cloudflare_Radar_SourceA.py
+    note: Reflects traffic seen by Cloudflare's network only (customer-base bias).
+  B_worldbank_wdi:
+    provider: World Bank, World Development Indicators API
+    url: https://data.worldbank.org/
+    license: CC BY 4.0
+    period: 2018-2024
+    raw: data/raw/sourceB/world_bank_econ_pred.csv, data/raw/sourceC/world_bank_digi_found.csv
+    fetched: "2026-11-17"
+    fetch_script: data/data_API/WBank_Econ_Pred.py, data/data_API/WBank_Digi_found.py
+  C_caida_bgp:
+    provider: CAIDA RouteViews Prefix-to-AS (rv2, IPv4) + CAIDA AS-to-Organization
+    url: https://www.caida.org/catalog/datasets/routeviews-prefix2as/ , https://www.caida.org/catalog/datasets/as-organizations/
+    license: CAIDA Acceptable Use Agreement (cite the dataset; report publications to CAIDA)
+    period: one snapshot per year, 1 July 2018-2024
+    raw: data/raw/sourceC/BGP/, data/raw/sourceC/ip24prefix/
+    fetched: "2026-11-17 (manual download)"
+  E_worldbank_wgi:
+    provider: World Bank, Worldwide Governance Indicators
+    url: https://www.worldbank.org/en/publication/worldwide-governance-indicators
+    license: CC BY 4.0 (World Bank Data Catalog)
+    period: 2018-2024
+    raw: data/raw/sourceE/world_bank_gov_wgi.csv
+    fetched: "2026-11-17"
+    fetch_script: data/data_API/WBank_Gov_WGI.py
+  E_vdem:
+    provider: V-Dem Institute, Country-Year Full+Others v16
+    url: https://www.v-dem.net/data/the-v-dem-dataset/
+    license: CC BY-SA 4.0
+    period: 2018-2024 used (file covers 1789-2025)
+    raw: data/raw/sourceE/V-Dem-CY-Full+Others-v16.csv
+    fetched: "2026-11-17 (manual download, v16)"
+  E_itu_gci:
+    provider: ITU Global Cybersecurity Index, editions 2018, 2020, 2024
+    url: https://www.itu.int/en/ITU-D/Cybersecurity/Pages/global-cybersecurity-index.aspx
+    license: "© ITU, all rights reserved: use and cite for analysis; do not redistribute the raw tables"
+    period: editions 2018, 2020, 2024
+    raw: data/raw/sourceE/GCI_*_Raw.csv
+    fetched: "2026-11-17 (manual)"
+
+tables:
+  country_reference:
+    layer: cleaned
+    grain: one country or territory
+    key: [iso3]
+    source: built from Cloudflare + World Bank codes
+    columns:
+      iso3: {description: รหัสประเทศ ISO 3166-1 alpha-3 (key หลักของทั้งโปรเจค)}
+      iso2: {description: รหัสประเทศ ISO alpha-2 (Cloudflare และ CAIDA ใช้รหัสนี้), missing: ไม่มีใน Cloudflare (เช่น CHI ของ World Bank)}
+      name: {description: ชื่อประเทศ (จาก Cloudflare ถ้ามี ไม่งั้นจาก World Bank)}
+      name_wb: {description: ชื่อประเทศตาม World Bank, missing: ไม่อยู่ในรายชื่อ World Bank}
+      in_worldbank: {description: อยู่ในรายชื่อ 217 เศรษฐกิจของ World Bank หรือไม่}
+
+  cloudflare_country_year:
+    layer: cleaned
+    grain: country x year
+    key: [iso3, year]
+    source: A_cloudflare
+    columns:
+      iso3: {description: รหัสประเทศ ISO3}
+      iso2: {description: รหัสประเทศ ISO2}
+      country_name: {description: ชื่อประเทศตาม Cloudflare}
+      year: {description: ปีที่ดึงข้อมูล (ช่วงจริงดูที่ meta_date_start/end)}
+      target_ddos_percent: {description: "สัดส่วนของ DDoS L7 ทั้งโลกที่ยิงใส่เว็บซึ่งจดทะเบียน (billing) ในประเทศนี้ (mitigationProduct=DDOS)", unit: "% of world", missing: "ไม่อยู่ในรายการที่ API คืนมา (คืนมาไม่ถึง limit จึงน่าจะเป็นประเทศที่แทบไม่โดน ~0 แต่ยังไม่เติมค่า)"}
+      origin_ddos_percent: {description: "สัดส่วนของ DDoS L7 ทั้งโลกที่มาจาก IP ในประเทศนี้ (ไม่ใช่สัญชาติผู้โจมตี)", unit: "% of world", missing: "ไม่ติด top 200 ของ API (ค่าน่าจะเล็กมาก)"}
+      target_l7_mitigated_percent: {description: "สัดส่วนของคำขอ L7 ที่ถูกบล็อกทั้งโลก (ทุกระบบ ไม่เฉพาะ DDoS) ที่ยิงใส่ประเทศนี้", unit: "% of world", missing: "ไม่ติด top 200 ของ API"}
+      origin_l7_mitigated_percent: {description: "สัดส่วนของคำขอ L7 ที่ถูกบล็อกทั้งโลก (ทุกระบบ) ที่มาจากประเทศนี้", unit: "% of world", missing: "ไม่ติด top 200 ของ API"}
+      meta_date_start: {description: "วันเริ่มจริงของข้อมูลตามที่ API แจ้ง (Radar จัดช่วงตามสัปดาห์ เช่น ปี 2022 = 2021-12-27 ถึง 2022-12-26)"}
+      meta_date_end: {description: วันสิ้นสุดจริงของข้อมูลตามที่ API แจ้ง}
+      http_traffic_percent: {description: สัดส่วน HTTP traffic ทั้งโลกที่มาจากประเทศนี้, unit: "% of world", missing: ปี 2022 ไม่มีข้อมูล}
+      ipv4_percent: {description: สัดส่วน HTTP traffic จากประเทศนี้ที่ใช้ IPv4, unit: "% of country traffic", missing: ปี 2022 ไม่มีข้อมูล}
+      ipv6_percent: {description: สัดส่วน HTTP traffic จากประเทศนี้ที่ใช้ IPv6 (รวมกับ ipv4 = 100), unit: "% of country traffic", missing: ปี 2022 ไม่มีข้อมูล}
+      bot_traffic_percent: {description: สัดส่วน HTTP traffic จากประเทศนี้ที่ Cloudflare จัดว่าเป็น bot, unit: "% of country traffic", missing: ปี 2022 ไม่มีข้อมูล}
+      tls_1_3_percent: {description: สัดส่วน HTTPS traffic จากประเทศนี้ที่ใช้ TLS 1.3 (ตัวแทนความทันสมัยของอุปกรณ์), unit: "% of country traffic", missing: ปี 2022 ไม่มีข้อมูล}
+      origin_mitig_waf_percent: {description: ในการโจมตี L7 ที่มาจากประเทศนี้ ถูกบล็อกด้วย WAF กี่ %, unit: "% of attacks from country", missing: ไม่มีการโจมตีที่บันทึกได้}
+      origin_mitig_ddos_percent: {description: ในการโจมตี L7 ที่มาจากประเทศนี้ ถูกบล็อกด้วยระบบ DDoS กี่ %, unit: "% of attacks from country", missing: ไม่มีการโจมตีที่บันทึกได้}
+      origin_mitig_bot_percent: {description: ในการโจมตี L7 ที่มาจากประเทศนี้ ถูกบล็อกด้วย Bot management กี่ %, unit: "% of attacks from country", missing: ไม่มีการโจมตีที่บันทึกได้}
+      l3_top_vector: {description: ประเภทการโจมตี L3 ที่ประเทศนี้โดนมากที่สุด (direction=TARGET), missing: ไม่มีข้อมูล L3 ของประเทศนี้}
+      l3_syn_percent: {description: สัดส่วน SYN Flood ในการโจมตี L3 ที่ประเทศนี้โดน (0 = ไม่ติด top 10), unit: "% of L3 attacks", missing: ไม่มีข้อมูล L3}
+      l3_udp_percent: {description: สัดส่วน UDP Flood ในการโจมตี L3 ที่ประเทศนี้โดน (0 = ไม่ติด top 10), unit: "% of L3 attacks", missing: ไม่มีข้อมูล L3}
+
+  cloudflare_l3_vectors:
+    layer: cleaned
+    grain: country x year x attack vector
+    key: [iso3, year, vector]
+    source: A_cloudflare
+    columns:
+      iso3: {description: รหัสประเทศ ISO3 (ประเทศที่โดนโจมตี)}
+      year: {description: ปี}
+      vector: {description: "ประเภทการโจมตี L3 เช่น SYN Flood หรือ DNS Amplification (other = นอก top 10)"}
+      percent: {description: สัดส่วนของ vector นี้ในการโจมตี L3 ที่ประเทศนี้โดน, unit: "% of L3 attacks"}
+
+  cloudflare_attack_pairs:
+    layer: cleaned
+    grain: year x origin country x target country (top 200 pairs per year)
+    key: [year, origin_iso2, target_iso2]
+    source: A_cloudflare
+    columns:
+      year: {description: ปี}
+      rank: {description: อันดับของคู่ในปีนั้น (มีช่วงกระโดด เพราะ API ตัดบางอันดับ)}
+      origin_iso3: {description: ISO3 ประเทศต้นทาง (T1 = เครือข่าย Tor)}
+      origin_iso2: {description: ISO2 ประเทศต้นทาง}
+      origin_country_name: {description: ชื่อประเทศต้นทาง}
+      target_iso3: {description: ISO3 ประเทศเป้าหมาย}
+      target_iso2: {description: ISO2 ประเทศเป้าหมาย}
+      target_country_name: {description: ชื่อประเทศเป้าหมาย}
+      attack_share_percent: {description: สัดส่วนของการโจมตี L7 ทั้งโลกที่เป็นคู่นี้ (top 200 รวมกันได้ 67-77%), unit: "% of world L7 attacks"}
+      origin_is_country: {description: false ถ้าต้นทางไม่ใช่ประเทศ (Tor)}
+      is_domestic: {description: true ถ้าต้นทางกับเป้าหมายเป็นประเทศเดียวกัน}
+
+  cloudflare_timeseries_weekly:
+    layer: cleaned
+    grain: area x request year x week
+    key: [iso2, request_year, week_start]
+    source: A_cloudflare
+    columns:
+      iso3: {description: รหัส ISO3 (หรือ GLOBAL / AP / EU)}
+      iso2: {description: รหัส ISO2 (หรือ GLOBAL / AP / EU)}
+      country_name: {description: ชื่อพื้นที่}
+      scope: {description: country / region / global}
+      request_year: {description: ปีของ request ที่ดึง (สัปดาห์เดียวกันอาจอยู่ 2 request)}
+      week_start: {description: วันเริ่มสัปดาห์ (จันทร์)}
+      trend_scaled: {description: ปริมาณการโจมตี L7 รายสัปดาห์ ปรับสเกลให้ค่าสูงสุดใน request = 1 เทียบข้ามประเทศหรือข้ามปีไม่ได้, unit: "0-1, scaled"}
+      is_partial_week: {description: true ถ้าสัปดาห์คร่อมปีของ request}
+
+  wb_econ:
+    layer: cleaned
+    grain: country x year
+    key: [iso3, year]
+    source: B_worldbank_wdi
+    columns:
+      iso3: {description: รหัสประเทศ ISO3}
+      country_name: {description: ชื่อประเทศตาม World Bank}
+      year: {description: ปี}
+      gdp_per_capita: {description: GDP ต่อหัว (NY.GDP.PCAP.CD), unit: current USD, missing: ยังไม่รายงาน}
+      secure_internet_servers_per_1m: {description: จำนวน secure internet server ต่อประชากร 1 ล้านคน (IT.NET.SECR.P6), unit: per 1M people, missing: ยังไม่รายงาน}
+      fdi_net_inflows: {description: เงินลงทุนโดยตรงจากต่างประเทศสุทธิ (BX.KLT.DINV.WD.GD.ZS), unit: "% of GDP", missing: ยังไม่รายงาน}
+      population: {description: ประชากรทั้งหมด (SP.POP.TOTL), unit: people}
+
+  wb_digital:
+    layer: cleaned
+    grain: country x year
+    key: [iso3, year]
+    source: B_worldbank_wdi
+    columns:
+      iso3: {description: รหัสประเทศ ISO3}
+      country_name: {description: ชื่อประเทศ}
+      year: {description: ปี}
+      internet_users_pct: {description: สัดส่วนประชากรที่ใช้อินเทอร์เน็ต (IT.NET.USER.ZS), unit: "% of population", missing: ยังไม่รายงาน (ปีล่าสุดขาดบ่อย)}
+      broadband_subs_per_100: {description: จำนวน fixed broadband ต่อประชากร 100 คน (IT.NET.BBND.P2), unit: per 100 people, missing: ยังไม่รายงาน}
+
+  wb_governance:
+    layer: cleaned
+    grain: country x year
+    key: [iso3, year]
+    source: E_worldbank_wgi
+    columns:
+      iso3: {description: รหัสประเทศ ISO3}
+      country_name: {description: ชื่อประเทศ}
+      year: {description: ปี}
+      gov_effectiveness: {description: WGI Government Effectiveness (ยิ่งสูงยิ่งดี), unit: "score approx -2.5..2.5", missing: WGI ไม่ประเมินประเทศนี้/ปีนี้}
+      rule_of_law: {description: WGI Rule of Law (ยิ่งสูงยิ่งดี), unit: "score approx -2.5..2.5", missing: WGI ไม่ประเมินประเทศนี้/ปีนี้}
+
+  vdem_country_year:
+    layer: cleaned
+    grain: country x year
+    key: [iso3, year]
+    source: E_vdem
+    columns:
+      iso3: {description: รหัสประเทศ (V-Dem country_text_id; PSE = West Bank เท่านั้น)}
+      country_name: {description: ชื่อประเทศตาม V-Dem}
+      year: {description: ปี}
+      v2smgovcapsec: {description: "รัฐมีบุคลากรและทรัพยากรพอจะรับมือภัยไซเบอร์หรือไม่ (ยิ่งสูงยิ่งมีขีดความสามารถ: ต่ำสุด = รับมือไม่ได้แม้การโจมตีง่ายๆ, สูงสุด = รับมือการโจมตีซับซ้อนได้)", unit: latent score (approx -3.6..3.7)}
+      v2smprivcon: {description: "กฎหมายเปิดให้รัฐเข้าถึงข้อมูลส่วนบุคคลบนอินเทอร์เน็ตได้แค่ไหน (ยิ่งสูงยิ่งคุ้มครอง: ต่ำสุด = รัฐเข้าถึงได้ทุกอย่าง, สูงสุด = เข้าถึงได้เฉพาะกรณีพิเศษ)", unit: latent score, missing: "ไม่มีกฎหมายความเป็นส่วนตัว (v2smprivex = No จึงข้ามคำถามนี้ ว่างโดยการออกแบบ)"}
+      v2smprivex: {description: "มีกฎหมายคุ้มครองความเป็นส่วนตัวและข้อมูลของผู้ใช้อินเทอร์เน็ตหรือไม่ (ใช่/ไม่ใช่ ค่าประมาณ > 0.86 ≈ มี)", unit: latent score}
+      v2x_polyarchy: {description: ดัชนีประชาธิปไตยเชิงเลือกตั้ง, unit: "0-1"}
+      v2x_libdem: {description: ดัชนีประชาธิปไตยเสรีนิยม, unit: "0-1"}
+      v2x_rule: {description: ดัชนีหลักนิติธรรม, unit: "0-1"}
+      v2smgovfilprc: {description: "รัฐบล็อกเว็บเพื่อเซ็นเซอร์เนื้อหาการเมืองบ่อยแค่ไหน (ยิ่งสูง = ยิ่งไม่ค่อยบล็อก: ต่ำสุด = บล็อกเป็นประจำ, สูงสุด = แทบไม่เคย)", unit: latent score}
+      v2smgovshut: {description: "รัฐตัดอินเทอร์เน็ตในประเทศบ่อยแค่ไหน (ยิ่งสูง = ยิ่งไม่ค่อยตัด: ต่ำสุด = ตัดเป็นประจำ, สูงสุด = แทบไม่เคย)", unit: latent score}
+      v2smgovsmmon: {description: "รัฐสอดส่องเนื้อหาการเมืองบนโซเชียลมีเดียครอบคลุมแค่ไหน (ยิ่งสูง = ยิ่งสอดส่องน้อย: ต่ำสุด = แทบทุกอย่าง, สูงสุด = แทบไม่สอดส่อง)", unit: latent score}
+      v2smfordom: {description: "รัฐบาลต่างชาติใช้โซเชียลมีเดียปล่อยข้อมูลเท็จเพื่อแทรกแซงการเมืองในประเทศบ่อยแค่ไหน (ยิ่งสูง = ยิ่งน้อย: ต่ำสุด = ทุกประเด็นสำคัญ, สูงสุด = แทบไม่เคย)", unit: latent score}
+      v2smpolcap: {description: "พรรคการเมืองหลักมีบุคลากรและทรัพยากรพอจะรับมือภัยไซเบอร์หรือไม่ (ยิ่งสูงยิ่งมีขีดความสามารถ) ไม่ใช่ศักยภาพของหน่วยบังคับใช้กฎหมาย", unit: latent score}
+      v2smgovcapsec_nr: {description: จำนวนผู้เชี่ยวชาญที่ประเมิน v2smgovcapsec (น้อย = ค่าน่าเชื่อถือน้อย), unit: coders}
+      v2smprivcon_nr: {description: จำนวนผู้เชี่ยวชาญที่ประเมิน v2smprivcon, unit: coders, missing: ไม่มีการประเมิน}
+
+  gci_country_edition:
+    layer: cleaned
+    grain: country x GCI edition
+    key: [iso3, edition]
+    source: E_itu_gci
+    columns:
+      edition: {description: "ฉบับของ GCI (2018 / 2020 / 2024)"}
+      name_raw: {description: ชื่อประเทศตามไฟล์ ITU ก่อนแปลงเป็นรหัส}
+      iso3: {description: รหัสประเทศ ISO3}
+      gci_score_100: {description: "คะแนน GCI รวม ปรับเป็นสเกล 0-100 (2018 คูณ 100 และ 2024 รวม 5 ด้าน) วิธีวัดต่างกันในแต่ละฉบับ", unit: "0-100"}
+      gci_rank: {description: อันดับโลก, missing: ฉบับ 2024 ไม่มีอันดับ}
+      gci_tier: {description: ระดับ T1 (ดีสุด) ถึง T5, missing: มีเฉพาะฉบับ 2024}
+      gci_flag: {description: "เครื่องหมายท้ายชื่อในฉบับ 2020: * = ไม่มีข้อมูล (no data collected), ** = ประเทศไม่ตอบแบบสอบถาม ทีม GCI เก็บข้อมูลเอง", missing: ไม่มีเครื่องหมาย (ประเทศตอบแบบสอบถามเอง)}
+      pillar_legal: {description: คะแนนด้านกฎหมาย, unit: "0-20", missing: มีเฉพาะฉบับ 2024}
+      pillar_technical: {description: คะแนนด้านเทคนิค, unit: "0-20", missing: มีเฉพาะฉบับ 2024}
+      pillar_organizational: {description: คะแนนด้านองค์กร, unit: "0-20", missing: มีเฉพาะฉบับ 2024}
+      pillar_capacity: {description: คะแนนด้านการพัฒนาขีดความสามารถ, unit: "0-20", missing: มีเฉพาะฉบับ 2024}
+      pillar_cooperation: {description: คะแนนด้านความร่วมมือ, unit: "0-20", missing: มีเฉพาะฉบับ 2024}
+
+  bgp_country_year:
+    layer: cleaned
+    grain: country x year
+    key: [iso3, year]
+    source: C_caida_bgp
+    columns:
+      iso3: {description: รหัสประเทศ ISO3 (ประเทศที่องค์กรเจ้าของ ASN จดทะเบียน)}
+      iso2: {description: รหัสประเทศ ISO2}
+      year: {description: ปีของ snapshot (1 ก.ค.)}
+      routed_asn_count: {description: จำนวน ASN สาธารณะที่ประกาศเส้นทาง IPv4 จริง, unit: ASNs}
+      routed_prefix_count: {description: จำนวน IPv4 prefix ที่ประกาศ (prefix ที่มีหลายเจ้าของแบ่งเป็นเศษส่วน), unit: prefixes}
+      ipv4_slash24_count: {description: ขนาด IPv4 ที่ถูก route เป็นจำนวนบล็อก /24 (ไม่นับซ้ำระหว่าง block ใหญ่กับ block ย่อย), unit: /24 blocks (x256 = IPs)}
+
+  country_year:
+    layer: integrated
+    grain: country x year (spine = 251 countries/territories x every year present in Cloudflare)
+    key: [iso3, year]
+    source: all cleaned country x year tables, left-joined on the spine
+    inherits: [cloudflare_country_year, wb_econ, wb_digital, wb_governance, vdem_country_year, bgp_country_year]
+    columns:
+      iso3: {description: รหัสประเทศ ISO3}
+      iso2: {description: รหัสประเทศ ISO2}
+      country_name: {description: ชื่อประเทศจาก country_reference}
+      year: {description: ปี (ตามปีที่มีใน Cloudflare)}
+      in_worldbank: {description: อยู่ในรายชื่อ World Bank หรือไม่}
+      gci_score_100: {description: คะแนน GCI จากฉบับล่าสุดที่ไม่เกินปีนี้ (as-of join), unit: "0-100", missing: ไม่มีใน GCI}
+      gci_tier: {description: tier ของ GCI (มีเฉพาะเมื่อใช้ฉบับ 2024), missing: ฉบับที่ใช้ไม่มี tier}
+      gci_edition_used: {description: ฉบับ GCI ที่ใช้กับปีนี้}
+      gci_age_years: {description: ปีนี้ห่างจากฉบับ GCI ที่ใช้กี่ปี (ยิ่งมากยิ่งเก่า), unit: years}
+      has_cloudflare: {description: join กับ cloudflare_country_year ติดหรือไม่}
+      has_wb_econ: {description: join กับ wb_econ ติดหรือไม่}
+      has_wb_digital: {description: join กับ wb_digital ติดหรือไม่}
+      has_wb_governance: {description: join กับ wb_governance ติดหรือไม่}
+      has_vdem: {description: join กับ vdem_country_year ติดหรือไม่}
+      has_bgp: {description: join กับ bgp_country_year ติดหรือไม่}
+      has_gci: {description: มีค่า GCI (as-of) หรือไม่}
+      has_population: {description: มีข้อมูลประชากรหรือไม่ (ใช้คัดดินแดนที่ไม่มีคนอยู่ออก)}
+      http_traffic_mean: {description: ค่าเฉลี่ย http_traffic_percent ของประเทศจากทุกปีที่มีข้อมูล (ใช้แทนปีที่ขาด), unit: "% of world"}
+      traffic_above_0_01pct: {description: true ถ้า http_traffic_mean >= 0.01% (ตัดประเทศที่ traffic น้อยจนค่าแกว่ง)}
+      n_sources_available: {description: จำนวน source ที่มีข้อมูลในแถวนี้ (0-7)}

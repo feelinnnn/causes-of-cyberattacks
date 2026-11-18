@@ -1,0 +1,32 @@
+# Start:  docker compose up --build      UI: http://localhost:8080
+# Login:  user "admin"; password: docker exec cyberattacks-airflow cat /opt/airflow/standalone_admin_password.txt
+services:
+  airflow:
+    build: .
+    container_name: cyberattacks-airflow
+    command: airflow standalone
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      # Airflow's own bookkeeping DB, kept apart from the project database in data/warehouse/
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/meta/airflow.db
+      AIRFLOW_HOME: /opt/airflow
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
+      - ./docs:/opt/airflow/docs
+      - ./reports:/opt/airflow/reports
+      - ./logs:/opt/airflow/logs
+      - ./.airflow:/opt/airflow/meta
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
