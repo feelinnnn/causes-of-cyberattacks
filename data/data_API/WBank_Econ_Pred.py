@@ -129,7 +129,7 @@ def main():
         df_merged = df_merged.sort_values(by=["country_code", "year"]).reset_index(drop=True)
 
         # กำหนดตำแหน่งบันทึกไฟล์ CSV (บันทึกลง data/raw/world_bank_econ_pred.csv)
-        output_dir = Path(__file__).resolve().parent.parent / "raw"
+        output_dir = Path(__file__).resolve().parent.parent / "raw" / "sourceB"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_file = output_dir / "world_bank_econ_pred.csv"
 

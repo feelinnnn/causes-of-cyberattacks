@@ -156,7 +156,7 @@
        - `v2smgovshut`: การตัดสัญญาณอินเทอร์เน็ตโดยรัฐ (Government internet shut down in practice)
        - `v2smgovsmmon`: การสอดส่องดูแลโซเชียลมีเดียโดยรัฐ (Government social media monitoring)
        - `v2smfordom`: การแทรกแซง/เผยแพร่ข้อมูลเท็จจากต่างชาติผ่านระบบออนไลน์ (Foreign governments dissemination of false information)
-       - `v2smpolcap`: ศักยภาพของหน่วยงานบังคับใช้กฎหมายในการจัดการอาชญากรรมออนไลน์
+       - `v2smpolcap`: ขีดความสามารถด้านความมั่นคงปลอดภัยไซเบอร์ของพรรคการเมืองหลัก (Political parties cyber security capacity — V-Dem codebook v16 หัวข้อ 7.2.10)
 
 ---
 

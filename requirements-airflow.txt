@@ -1,0 +1,8 @@
+# Packages installed inside the Airflow Docker image (Airflow itself is already in the image).
+# Kept separate from requirements.txt: Airflow 2.10 needs SQLAlchemy < 2, which the local
+# requirements do not pin.
+pandas
+numpy
+pyyaml
+requests
+pyspark  # version comes from the Airflow constraints file (3.5.4)
