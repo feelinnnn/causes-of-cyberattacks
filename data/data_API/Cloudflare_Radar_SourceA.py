@@ -430,7 +430,7 @@ def fetch_all_radar_countries() -> dict[str, str]:
     for loc in res.get("locations", []):
         iso2 = (loc.get("alpha2") or "").upper().strip()
         name = loc.get("name") or ""
-        if len(iso2) == 2 and iso2 not in ("AP", "EU"):
+        if len(iso2) == 2:
             countries[iso2] = name
     return countries
 
@@ -501,60 +501,6 @@ def fetch_outage_annotations(year: int, limit: int = 200) -> list[dict]:
             }
         )
     return rows
-
-
-def add_compositional_and_dq_columns(df: pd.DataFrame, min_traffic_threshold: float = 0.01) -> pd.DataFrame:
-    """
-    แก้ไขปัญหาข้อที่ 2 (Compositional Data):
-    - คำนวณดัชนีความเข้มข้น (Intensity Index = share_attack / share_http_traffic)
-    - คำนวณ Log-Ratio = ln((share_attack + eps) / (share_http_traffic + eps))
-    - สร้างตัวแปรสถานะ is_above_min_traffic (http_traffic_percent >= 0.01%) เพื่อกรองประเทศเล็กที่ค่าแกว่งสูง
-    """
-    import math
-
-    eps = 1e-4
-    df = df.copy()
-
-    # แปลงคอลัมน์ตัวเลขให้เป็น float
-    num_cols = [
-        "target_ddos_percent",
-        "origin_ddos_percent",
-        "target_l7_mitigated_percent",
-        "origin_l7_mitigated_percent",
-        "http_traffic_percent",
-    ]
-    for col in num_cols:
-        if col not in df.columns:
-            df[col] = None
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    df["is_above_min_traffic"] = df["http_traffic_percent"] >= min_traffic_threshold
-
-    def calc_intensity(row, attack_col):
-        h = row["http_traffic_percent"]
-        a = row[attack_col]
-        if pd.isna(h) or pd.isna(a) or h < min_traffic_threshold:
-            return None
-        return round(float(a) / float(h), 6)
-
-    def calc_log_ratio(row, attack_col):
-        h = row["http_traffic_percent"]
-        a = row[attack_col]
-        if pd.isna(h) or pd.isna(a):
-            return None
-        return round(math.log((float(a) + eps) / (float(h) + eps)), 6)
-
-    df["target_ddos_intensity"] = df.apply(lambda r: calc_intensity(r, "target_ddos_percent"), axis=1)
-    df["origin_ddos_intensity"] = df.apply(lambda r: calc_intensity(r, "origin_ddos_percent"), axis=1)
-    df["target_l7_intensity"] = df.apply(lambda r: calc_intensity(r, "target_l7_mitigated_percent"), axis=1)
-    df["origin_l7_intensity"] = df.apply(lambda r: calc_intensity(r, "origin_l7_mitigated_percent"), axis=1)
-
-    df["target_ddos_log_ratio"] = df.apply(lambda r: calc_log_ratio(r, "target_ddos_percent"), axis=1)
-    df["origin_ddos_log_ratio"] = df.apply(lambda r: calc_log_ratio(r, "origin_ddos_percent"), axis=1)
-    df["target_l7_log_ratio"] = df.apply(lambda r: calc_log_ratio(r, "target_l7_mitigated_percent"), axis=1)
-    df["origin_l7_log_ratio"] = df.apply(lambda r: calc_log_ratio(r, "origin_l7_mitigated_percent"), axis=1)
-
-    return df
 
 
 def fetch_attack_flow_pairs(year: int, limit: int = 200) -> list[dict]:
@@ -745,30 +691,46 @@ def fetch_country_metrics(
 
 def patch_existing_csv(existing_csv: Path, out_dir: Path):
     """
-    โหมดซ่อมและอัปเกรดไฟล์ CSV ที่มีอยู่แล้วอย่างรวดเร็ว (~10 วินาที, ไม่ต้องยิงรายประเทศใหม่ 4,500 ครั้ง):
+    โหมดดึงเฉพาะ Raw Data ส่วน Global Top Locations และ Outage Annotations เพิ่มลงไฟล์เดิม (~10 วินาที):
       1. ดึง target_ddos_percent & origin_ddos_percent (mitigationProduct=DDOS)
       2. ดึง target_l7_mitigated_percent & origin_l7_mitigated_percent (รวมทุกกลไก L7)
-      3. คำนวณ Intensity Index และ Log-Ratio (แก้ปัญหา Compositional Data)
-      4. ดึง Outage Annotations (radar/annotations/outages) สำหรับ Data Quality Report
-      5. บันทึก meta.dateRange ของแต่ละปี
+      3. ดึง Outage Annotations (radar/annotations/outages)
+      4. บันทึก meta.dateRange (meta_date_start, meta_date_end) ของแต่ละปี
+      (ไม่มีกระบวนการ Clean หรือคำนวณ Feature เพิ่มเติม เก็บเป็น Raw Data 100%)
     """
-    print(f"พบไฟล์ข้อมูลเดิมที่: {existing_csv}")
-    print("กำลังรันโหมด Fast Upgrade (~10 วินาที) เพื่อเติมข้อมูล Global Top Locations, Intensity/Log-Ratio และ Outage Annotations...")
+    print(f"พบไฟล์ข้อมูลดิบเดิมที่: {existing_csv}")
+    print("กำลังดึงเฉพาะ Raw Data ส่วน Global Top Locations และ Outage Annotations เพิ่มเติม (~10 วินาที)...")
 
     df = pd.read_csv(existing_csv, keep_default_na=False)
-    # แปลงค่าว่างกลับเป็น None สำหรับคอลัมน์ตัวเลข แต่คง 'NA' ของนามิเบียใน country_iso2 ไว้
     for col in df.columns:
         if col not in ("country_code", "country_name", "country_iso2"):
             df[col] = df[col].replace("", None)
 
-    df.loc[df["country_iso2"] == "GR", "country_code"] = "GRC"
+    for float_col in (
+        "target_ddos_percent",
+        "origin_ddos_percent",
+        "target_l7_mitigated_percent",
+        "origin_l7_mitigated_percent",
+        "http_traffic_percent",
+    ):
+        if float_col in df.columns:
+            df[float_col] = pd.to_numeric(df[float_col], errors="coerce").astype("float64")
+        else:
+            df[float_col] = pd.Series([float("nan")] * len(df), dtype="float64")
+
+    for str_col in ("meta_date_start", "meta_date_end"):
+        if str_col not in df.columns:
+            df[str_col] = pd.Series([None] * len(df), dtype="object")
+        else:
+            df[str_col] = df[str_col].astype("object")
+
     df["year"] = df["year"].astype(int)
 
     years = sorted(df["year"].unique().tolist())
     all_outages = []
 
     for yr in years:
-        print(f"  -> ดึงข้อมูล Global Top Locations (DDOS & All L7) และ Outage Annotations ปี {yr}...")
+        print(f"  -> ดึง Raw Global Top Locations (DDOS & All L7) และ Outage Annotations ปี {yr}...")
         gdata = fetch_global_top_locations(yr)
         outages = fetch_outage_annotations(yr)
         all_outages.extend(outages)
@@ -781,24 +743,19 @@ def patch_existing_csv(existing_csv: Path, out_dir: Path):
         df.loc[mask, "target_l7_mitigated_percent"] = df.loc[mask, "country_iso2"].map(gdata["target_l7_map"])
         df.loc[mask, "origin_l7_mitigated_percent"] = df.loc[mask, "country_iso2"].map(gdata["origin_l7_map"])
 
-        # เติม http_traffic_percent หากปีใดยังว่างและ API มีข้อมูล
         if gdata["http_map"]:
             existing_http = pd.to_numeric(df.loc[mask, "http_traffic_percent"], errors="coerce")
             mapped_http = df.loc[mask, "country_iso2"].map(gdata["http_map"])
             df.loc[mask, "http_traffic_percent"] = existing_http.combine_first(mapped_http)
 
-    # คำนวณ Compositional Intensity & Log-Ratio
-    df = add_compositional_and_dq_columns(df, min_traffic_threshold=0.01)
-
-    # ตัดรหัสภูมิภาค AP และ EU ออกจากการเป็นประเทศ
-    df = df[~df["country_iso2"].isin(["AP", "EU"])].sort_values(by=["country_code", "year"]).reset_index(drop=True)
+    df = df.sort_values(by=["country_code", "year"]).reset_index(drop=True)
     df.to_csv(existing_csv, index=False, encoding="utf-8-sig")
-    print(f"[สำเร็จ 1/2] อัปเดตไฟล์หลักเรียบร้อยที่: {existing_csv} ({len(df)} แถว, {len(df.columns)} คอลัมน์)")
+    print(f"[สำเร็จ 1/2] อัปเดตไฟล์ Raw Data เรียบร้อยที่: {existing_csv} ({len(df)} แถว, {len(df.columns)} คอลัมน์)")
 
     if all_outages:
         outages_csv = out_dir / "cloudflare_annotations_outages.csv"
         pd.DataFrame(all_outages).to_csv(outages_csv, index=False, encoding="utf-8-sig")
-        print(f"[สำเร็จ 2/2] บันทึกตาราง Outage Annotations สำหรับ DQ Report ที่: {outages_csv} ({len(all_outages)} แถว)")
+        print(f"[สำเร็จ 2/2] บันทึกตาราง Raw Outage Annotations ที่: {outages_csv} ({len(all_outages)} แถว)")
 
 
 def main():
@@ -817,8 +774,8 @@ def main():
         patch_existing_csv(existing_main_csv, output_dir)
         return
 
-    # กรณีรันใหม่ทั้งหมด (--full หรือยังไม่มีไฟล์เดิม): เริ่มดึงตั้งแต่ปี 2022-2024 (Radar 2.0 เปิดตัว ก.ย. 2022)
-    years_to_fetch = [2022, 2023, 2024]
+    # กรณีรันใหม่ทั้งหมด (--full หรือยังไม่มีไฟล์เดิม): ลองดึงตั้งแต่ปี 2018-2024 (ปีที่ API ไม่มีข้อมูลจะถูกข้ามอัตโนมัติ)
+    years_to_fetch = list(range(2018, 2025))
 
     print("กำลังดึงรายชื่อประเทศทั้งหมดจาก Cloudflare Radar...")
     all_radar_countries = fetch_all_radar_countries()
@@ -850,13 +807,10 @@ def main():
         all_outage_records.extend(outage_rows)
 
         countries_for_year = sorted(
-            (
-                set(all_radar_countries.keys())
-                | set(global_data["http_map"].keys())
-                | set(global_data["target_l7_map"].keys())
-                | set(global_data["origin_l7_map"].keys())
-            )
-            - {"AP", "EU"}
+            set(all_radar_countries.keys())
+            | set(global_data["http_map"].keys())
+            | set(global_data["target_l7_map"].keys())
+            | set(global_data["origin_l7_map"].keys())
         )
         global_data["names_map"] = {**all_radar_countries, **global_data["names_map"]}
 
@@ -876,9 +830,7 @@ def main():
             time.sleep(0.15)
 
     if main_records:
-        df_main = pd.DataFrame(main_records)
-        df_main = add_compositional_and_dq_columns(df_main, min_traffic_threshold=0.01)
-        df_main = df_main.sort_values(by=["country_code", "year"]).reset_index(drop=True)
+        df_main = pd.DataFrame(main_records).sort_values(by=["country_code", "year"]).reset_index(drop=True)
         main_csv = output_dir / "cloudflare_radar_source_a.csv"
         df_main.to_csv(main_csv, index=False, encoding="utf-8-sig")
         print(f"\n[สำเร็จ 1/4] บันทึกตารางหลัก Country-Year ที่: {main_csv} ({len(df_main)} แถว)")
