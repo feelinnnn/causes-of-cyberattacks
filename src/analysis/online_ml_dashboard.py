@@ -24,13 +24,16 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from sklearn.linear_model import SGDRegressor
+from sklearn.ensemble import ExtraTreesRegressor, GradientBoostingRegressor, RandomForestRegressor, VotingRegressor
+from sklearn.linear_model import Ridge, SGDRegressor
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 from sklearn.preprocessing import StandardScaler
 
+from analysis.train_models_v2 import ALL_FEATURES_V2_Z
 from cyber_pipeline.utils.paths import ANALYTICAL
 
 ONLINE_DIR = ANALYTICAL / "online"
+V2_DIR = ANALYTICAL / "v2"
 
 TASK_LABELS = {
     "Target_DDoS_Intensity": "🎯 1. ฝั่งเป้าหมายผู้ถูกโจมตี DDoS (Target_DDoS_Intensity)",
@@ -47,6 +50,84 @@ def load_online_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Dat
     df_coef = pd.read_csv(ONLINE_DIR / "online_coef_evolution.csv")
     df_pred = pd.read_csv(ONLINE_DIR / "online_predictions.csv")
     return df_sum, df_log, df_drift, df_coef, df_pred
+
+
+@st.cache_resource
+def load_and_train_batch_v2_models() -> tuple[pd.DataFrame, dict[str, dict[str, object]], dict[str, tuple[float, float]]]:
+    """Load V2 features and train the 5 Batch ML models on Train (2022-2023) for live interactive inference."""
+    df_v2 = pd.read_csv(V2_DIR / "features.csv")
+    tr = df_v2[df_v2["split"] == "train"].reset_index(drop=True)
+
+    # Record train mean and std for raw -> z-score conversion when user adjusts raw sliders
+    raw_cols = [
+        "http_traffic_mean_log",
+        "population_log",
+        "internet_users_pct",
+        "broadband_subs_per_100",
+        "routed_asn_count_log",
+        "routed_prefix_count_log",
+        "ipv4_slash24_count_log",
+        "secure_servers_per_1m_log",
+        "ipv6_pct_log",
+        "tls_1_3_percent",
+        "bot_traffic_percent",
+        "gdp_per_capita_log",
+        "fdi_net_inflows_clipped",
+        "gci_score_100",
+        "v2smgovcapsec",
+        "v2smfordom",
+        "v2x_polyarchy",
+        "gov_effectiveness",
+        "rule_of_law",
+        "asn_per_capita_log",
+        "traffic_per_capita_log",
+        "ipv4_per_asn_log",
+    ]
+    scaler_stats: dict[str, tuple[float, float]] = {}
+    for c in raw_cols:
+        scaler_stats[c] = (float(tr[c].mean()), float(tr[c].std()))
+
+    # Interaction raw stats on train
+    unsec_asn_raw = tr["routed_asn_count_log_z"] * (-tr["gov_effectiveness_z"])
+    unsec_bb_raw = tr["broadband_subs_per_100_z"] * (-tr["cyber_readiness_index_z"])
+    scaler_stats["unsecured_asn_raw"] = (float(unsec_asn_raw.mean()), float(unsec_asn_raw.std()))
+    scaler_stats["unsecured_broadband_raw"] = (float(unsec_bb_raw.mean()), float(unsec_bb_raw.std()))
+    scaler_stats["gci_2024"] = (
+        float(df_v2.loc[df_v2["year"] == 2024, "gci_score_100"].mean()),
+        float(df_v2.loc[df_v2["year"] == 2024, "gci_score_100"].std()),
+    )
+
+    target_map = {
+        "Target_DDoS_Intensity": "attack_intensity_floored_log",
+        "Origin_DDoS_Intensity": "origin_ddos_intensity_log",
+        "Origin_L7_Intensity": "origin_l7_intensity_log",
+    }
+
+    trained_models: dict[str, dict[str, object]] = {}
+    X_tr = tr[ALL_FEATURES_V2_Z]
+    for t_name, y_col in target_map.items():
+        y_tr = tr[y_col]
+        ridge = Ridge(alpha=100.0, random_state=42).fit(X_tr, y_tr)
+        rf = RandomForestRegressor(n_estimators=200, max_depth=4, min_samples_leaf=4, random_state=42).fit(X_tr, y_tr)
+        et = ExtraTreesRegressor(n_estimators=200, max_depth=5, min_samples_leaf=4, random_state=42).fit(X_tr, y_tr)
+        gb = GradientBoostingRegressor(
+            loss="huber", n_estimators=80, learning_rate=0.03, max_depth=3, min_samples_leaf=6, random_state=42
+        ).fit(X_tr, y_tr)
+        ens = VotingRegressor([
+            ("rf", RandomForestRegressor(n_estimators=200, max_depth=4, min_samples_leaf=4, random_state=42)),
+            ("et", ExtraTreesRegressor(n_estimators=200, max_depth=5, min_samples_leaf=4, random_state=42)),
+            ("gb", GradientBoostingRegressor(loss="huber", n_estimators=80, learning_rate=0.03, max_depth=3, min_samples_leaf=6, random_state=42)),
+            ("ridge", Ridge(alpha=100.0, random_state=42)),
+        ]).fit(X_tr, y_tr)
+        trained_models[t_name] = {
+            "Ridge_Regression": ridge,
+            "Random_Forest": rf,
+            "Extra_Trees": et,
+            "Gradient_Boosting": gb,
+            "Voting_Ensemble": ens,
+        }
+
+    return df_v2, trained_models, scaler_stats
 
 
 def main() -> None:
@@ -117,10 +198,11 @@ def main() -> None:
             f"**เดือนถัดไปที่โมเดลพยากรณ์ล่วงหน้า:** `{next_ym}`"
         )
 
-    tab_replay, tab_whatif, tab_summary = st.tabs([
-        f"📈 1. กดดูผลทีละเดือน (Step-by-Step Replay: {current_ym} → {next_ym})",
-        "🧪 2. ทดลองป้อนข้อมูลเดือนอนาคตเอง (Interactive What-If Simulator)",
-        "📊 3. ตารางสรุปผลรวมตลอด 3 รอบปี (Overall Summary & Drift Log)",
+    tab_replay, tab_batch_sim, tab_whatif, tab_summary = st.tabs([
+        f"📈 1. Online ML: กดดูผลทีละเดือน ({current_ym} → {next_ym})",
+        "🎛️ 2. Batch ML: ปรับค่าฟีเจอร์เองแล้วโยนให้โมเดลทำนาย (Interactive Predictor)",
+        "🧪 3. Online ML: ทดลองป้อนข้อมูลเดือนอนาคต (What-If Simulator)",
+        "📊 4. ตารางสรุปผลรวมตลอด 3 รอบปี (Overall Summary & Drift Log)",
     ])
 
     # =======================================================================
@@ -348,7 +430,225 @@ def main() -> None:
         )
 
     # =======================================================================
-    # TAB 2: INTERACTIVE "WHAT-IF" NEXT-MONTH SIMULATOR
+    # TAB 2: BATCH ML INTERACTIVE FEATURE ADJUSTER & LIVE PREDICTOR
+    # =======================================================================
+    with tab_batch_sim:
+        st.subheader("🎛️ Batch ML Interactive Simulator: ปรับค่าตัวแปรต้น ($H_1, H_2, H_3$) แล้วโยนให้โมเดลทั้ง 5 ตัวทำนายสดๆ")
+        st.write(
+            "เลือกประเทศตั้งต้นเพื่อดึงค่าจริงปี 2024 ขึ้นมา แล้วลองเลื่อนปรับค่าฟีเจอร์ (เช่น เพิ่มเน็ตบ้าน, เพิ่มเซิร์ฟเวอร์ HTTPS, "
+            "เพิ่มคะแนนความพร้อมไซเบอร์ GCI หรือธรรมาภิบาลภาครัฐ) เพื่อดูว่าโมเดล Batch ML (V2) ทั้ง 5 ตัวจะทำนายความเข้มข้นของการโจมตีเปลี่ยนไปอย่างไร"
+        )
+
+        df_v2, batch_models, sc_stats = load_and_train_batch_v2_models()
+        df_2024 = df_v2[df_v2["year"] == 2024].sort_values("country_name").reset_index(drop=True)
+
+        country_options = df_2024["iso3"].tolist()
+        country_labels = {r["iso3"]: f"{r['country_name']} ({r['iso3']})" for _, r in df_2024.iterrows()}
+        default_idx = country_options.index("THA") if "THA" in country_options else 0
+
+        sel_iso = st.selectbox(
+            "🌍 เลือกประเทศตั้งต้น (ดึงค่าจริงปี 2024 เป็นค่าเริ่มต้นของ Slider):",
+            options=country_options,
+            index=default_idx,
+            format_func=lambda k: country_labels[k],
+        )
+        base_row = df_2024[df_2024["iso3"] == sel_iso].iloc[0]
+
+        st.markdown("#### 🛠️ ปรับค่าตัวแปรต้น (Features) ตามสมมติฐาน $H_1, H_2, H_3$")
+        col_h1, col_h2, col_h3 = st.columns(3)
+
+        with col_h1:
+            st.markdown("##### 🌐 $H_1$: โครงสร้างพื้นฐานดิจิทัล")
+            in_bb = st.slider(
+                "เน็ตบ้านต่อประชากร 100 คน (broadband_subs_per_100)",
+                0.0, 55.0, float(base_row["broadband_subs_per_100"]), 0.5,
+            )
+            in_inet = st.slider(
+                "% ผู้ใช้อินเทอร์เน็ต (internet_users_pct)",
+                5.0, 100.0, float(base_row["internet_users_pct"]), 1.0,
+            )
+            in_asn = st.slider(
+                "จำนวนเครือข่าย ISP/ASN (routed_asn_count)",
+                1, 20000, int(round(np.exp(base_row["routed_asn_count_log"]))), 10,
+            )
+            in_srv = st.slider(
+                "เซิร์ฟเวอร์ HTTPS ต่อล้านคน (log scale)",
+                0.0, 13.5, float(base_row["secure_servers_per_1m_log"]), 0.1,
+            )
+            in_tls = st.slider(
+                "สัดส่วนการใช้ TLS 1.3 (%)",
+                0.0, 100.0, float(base_row["tls_1_3_percent"]), 1.0,
+            )
+
+        with col_h2:
+            st.markdown("##### 💰 $H_2$: เศรษฐกิจและขนาดประเทศ")
+            in_gdp = st.slider(
+                "รายได้ต่อหัว GDP per Capita (USD)",
+                500, 140000, int(round(np.exp(base_row["gdp_per_capita_log"]))), 500,
+            )
+            in_fdi = st.slider(
+                "เงินลงทุนต่างชาติ FDI (% ของ GDP, Clipped)",
+                -7.0, 16.0, float(base_row["fdi_net_inflows_clipped"]), 0.2,
+            )
+            in_traffic = st.slider(
+                "ขนาดทราฟฟิกอินเทอร์เน็ต (http_traffic_mean_log)",
+                -4.6, 3.2, float(base_row["http_traffic_mean_log"]), 0.1,
+            )
+            in_pop = st.slider(
+                "ขนาดประชากร (population_log)",
+                11.5, 21.1, float(base_row["population_log"]), 0.1,
+            )
+
+        with col_h3:
+            st.markdown("##### 🛡️ $H_3$: ความพร้อมไซเบอร์และธรรมาภิบาล")
+            in_gci = st.slider(
+                "คะแนนความพร้อมไซเบอร์ ITU GCI (0–100)",
+                0.0, 100.0, float(base_row["gci_score_100"]), 1.0,
+            )
+            in_vdem_sec = st.slider(
+                "ขีดความสามารถไซเบอร์ของรัฐ V-Dem (v2smgovcapsec)",
+                -3.5, 3.5, float(base_row["v2smgovcapsec"]), 0.1,
+            )
+            in_goveff = st.slider(
+                "ประสิทธิภาพภาครัฐ WGI (gov_effectiveness)",
+                -2.5, 2.5, float(base_row["gov_effectiveness"]), 0.1,
+            )
+            in_rule = st.slider(
+                "หลักนิติธรรม WGI (rule_of_law)",
+                -2.5, 2.5, float(base_row["rule_of_law"]), 0.1,
+            )
+            in_fordom = st.slider(
+                "การแทรกแซงข้อมูลไซเบอร์ข้ามชาติ (v2smfordom: ต่ำ=ถูกแทรกแซงมาก)",
+                -3.5, 3.5, float(base_row["v2smfordom"]), 0.1,
+            )
+
+        # Build feature vector X_custom in exact ALL_FEATURES_V2_Z order
+        def _z(col_name: str, raw_val: float) -> float:
+            m, s = sc_stats[col_name]
+            return (raw_val - m) / s
+
+        custom_row = base_row[ALL_FEATURES_V2_Z].copy()
+        asn_log_val = float(np.log(max(in_asn, 1)))
+        gdp_log_val = float(np.log(max(in_gdp, 100)))
+
+        custom_row["http_traffic_mean_log_z"] = _z("http_traffic_mean_log", in_traffic)
+        custom_row["population_log_z"] = _z("population_log", in_pop)
+        custom_row["internet_users_pct_z"] = _z("internet_users_pct", in_inet)
+        custom_row["broadband_subs_per_100_z"] = _z("broadband_subs_per_100", in_bb)
+        custom_row["routed_asn_count_log_z"] = _z("routed_asn_count_log", asn_log_val)
+        custom_row["secure_servers_per_1m_log_z"] = _z("secure_servers_per_1m_log", in_srv)
+        custom_row["tls_1_3_percent_z"] = _z("tls_1_3_percent", in_tls)
+        custom_row["gdp_per_capita_log_z"] = _z("gdp_per_capita_log", gdp_log_val)
+        custom_row["fdi_net_inflows_clipped_z"] = _z("fdi_net_inflows_clipped", in_fdi)
+
+        gci_m24, gci_s24 = sc_stats["gci_2024"]
+        custom_row["gci_z_within_edition"] = (in_gci - gci_m24) / gci_s24
+        custom_row["v2smgovcapsec_z"] = _z("v2smgovcapsec", in_vdem_sec)
+        custom_row["gov_effectiveness_z"] = _z("gov_effectiveness", in_goveff)
+        custom_row["rule_of_law_z"] = _z("rule_of_law", in_rule)
+        custom_row["v2smfordom_z"] = _z("v2smfordom", in_fordom)
+        custom_row["cyber_readiness_index_z"] = (
+            custom_row["gci_z_within_edition"] + custom_row["v2smgovcapsec_z"] + custom_row["gov_effectiveness_z"]
+        ) / 3.0
+
+        # Recompute ratio & interaction features dynamically from adjusted inputs
+        custom_row["asn_per_capita_log_z"] = _z("asn_per_capita_log", asn_log_val - in_pop)
+        custom_row["traffic_per_capita_log_z"] = _z("traffic_per_capita_log", in_traffic - in_pop)
+        custom_row["ipv4_per_asn_log_z"] = _z("ipv4_per_asn_log", float(base_row["ipv4_slash24_count_log"]) - asn_log_val)
+        custom_row["unsecured_asn_z"] = _z(
+            "unsecured_asn_raw", custom_row["routed_asn_count_log_z"] * (-custom_row["gov_effectiveness_z"])
+        )
+        custom_row["unsecured_broadband_z"] = _z(
+            "unsecured_broadband_raw", custom_row["broadband_subs_per_100_z"] * (-custom_row["cyber_readiness_index_z"])
+        )
+
+        X_orig_df = pd.DataFrame([base_row[ALL_FEATURES_V2_Z].values], columns=ALL_FEATURES_V2_Z)
+        X_cust_df = pd.DataFrame([custom_row[ALL_FEATURES_V2_Z].values], columns=ALL_FEATURES_V2_Z)
+
+        target_col_map = {
+            "Target_DDoS_Intensity": "attack_intensity_floored_log",
+            "Origin_DDoS_Intensity": "origin_ddos_intensity_log",
+            "Origin_L7_Intensity": "origin_l7_intensity_log",
+        }
+        y_actual_2024 = float(base_row[target_col_map[selected_task]])
+
+        models_for_task = batch_models[selected_task]
+        comp_rows = []
+        for m_name, est in models_for_task.items():
+            p_orig = float(est.predict(X_orig_df)[0])
+            p_cust = float(est.predict(X_cust_df)[0])
+            delta_ln = p_cust - p_orig
+            pct_mult = (np.exp(delta_ln) - 1.0) * 100.0
+            comp_rows.append({
+                "โมเดล (Batch ML V2)": m_name,
+                "ค่าจริงปี 2024 (y_true)": round(y_actual_2024, 4),
+                "ทายจากค่าเดิมของประเทศ (Original)": round(p_orig, 4),
+                "ทายจากค่าที่คุณปรับใหม่ (Custom)": round(p_cust, 4),
+                "ผลต่างบนสเกล ln (Δ)": round(delta_ln, 4),
+                "ความเสี่ยงเปลี่ยนไป (%)": f"{pct_mult:+.1f}%",
+            })
+        comp_df = pd.DataFrame(comp_rows)
+
+        st.markdown("---")
+        st.markdown(f"#### 🎯 ผลลัพธ์การทำนายจากโมเดล Batch ML ทั้ง 5 ตัว สำหรับโจทย์ `{selected_task}`")
+
+        ens_row = comp_df[comp_df["โมเดล (Batch ML V2)"] == "Voting_Ensemble"].iloc[0]
+        bm1, bm2, bm3, bm4 = st.columns(4)
+        bm1.metric("📌 ค่าจริงปี 2024 ของประเทศนี้", f"{y_actual_2024:.3f}")
+        bm2.metric("🧊 Voting Ensemble (ค่าเดิม)", f"{ens_row['ทายจากค่าเดิมของประเทศ (Original)']:.3f}")
+        bm3.metric(
+            "🚀 Voting Ensemble (หลังปรับค่าใหม่)",
+            f"{ens_row['ทายจากค่าที่คุณปรับใหม่ (Custom)']:.3f}",
+            f"{ens_row['ผลต่างบนสเกล ln (Δ)']:+.3f} ({ens_row['ความเสี่ยงเปลี่ยนไป (%)']})",
+            delta_color="inverse",
+        )
+
+        # Compute global rank before vs after among 144 countries in 2024
+        all_2024_preds = models_for_task["Voting_Ensemble"].predict(df_2024[ALL_FEATURES_V2_Z])
+        rank_orig = int(np.sum(all_2024_preds > ens_row["ทายจากค่าเดิมของประเทศ (Original)"]) + 1)
+        rank_cust = int(np.sum(all_2024_preds > ens_row["ทายจากค่าที่คุณปรับใหม่ (Custom)"]) + 1)
+        bm4.metric(
+            "🌍 อันดับความเสี่ยงเทียบ 144 ประเทศทั่วโลก",
+            f"อันดับ {rank_cust} / 144",
+            f"ขยับจากอันดับ {rank_orig} ({rank_orig - rank_cust:+d} อันดับ)",
+        )
+
+        bc_chart, bc_table = st.columns([3, 2])
+        with bc_chart:
+            bar_melt = comp_df.melt(
+                id_vars=["โมเดล (Batch ML V2)"],
+                value_vars=["ทายจากค่าเดิมของประเทศ (Original)", "ทายจากค่าที่คุณปรับใหม่ (Custom)"],
+                var_name="สถานะ",
+                value_name="ค่าพยากรณ์ความเข้มข้น (ln)",
+            )
+            fig_b = px.bar(
+                bar_melt,
+                x="โมเดล (Batch ML V2)",
+                y="ค่าพยากรณ์ความเข้มข้น (ln)",
+                color="สถานะ",
+                barmode="group",
+                text="ค่าพยากรณ์ความเข้มข้น (ln)",
+                color_discrete_sequence=["#34495e", "#e67e22"],
+            )
+            fig_b.add_hline(
+                y=y_actual_2024,
+                line_dash="dash",
+                line_color="#e74c3c",
+                annotation_text=f"ค่าจริงปี 2024 ({y_actual_2024:.2f})",
+            )
+            fig_b.update_traces(texttemplate="%{text:.2f}", textposition="outside")
+            fig_b.update_layout(
+                height=380,
+                margin=dict(l=20, r=20, t=30, b=20),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            )
+            st.plotly_chart(fig_b, use_container_width=True)
+
+        with bc_table:
+            st.dataframe(comp_df, use_container_width=True, height=350)
+
+    # =======================================================================
+    # TAB 3: INTERACTIVE "WHAT-IF" NEXT-MONTH SIMULATOR
     # =======================================================================
     with tab_whatif:
         st.subheader("🧪 ทดลองป้อนสถานการณ์จำลองของเดือนถัดไปเข้า `.partial_fit()` สดๆ")
