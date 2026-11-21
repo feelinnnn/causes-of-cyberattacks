@@ -55,7 +55,10 @@ def collect() -> dict[str, pd.DataFrame]:
     tables["country_year"] = read(INTEGRATED / "country_year.csv")
     for name, path in {"dq_results": REPORTS / "dq" / "dq_results.csv",
                        "cleaning_log": CLEANED / "_cleaning_log.csv",
-                       "features": ANALYTICAL / "features.csv"}.items():
+                       "features": ANALYTICAL / "features.csv",
+                       "model_metrics": ANALYTICAL / "model_metrics.csv",
+                       "feature_importance": ANALYTICAL / "feature_importance.csv",
+                       "model_predictions": ANALYTICAL / "model_predictions.csv"}.items():
         if path.exists():
             tables[name] = read(path)
     return tables
