@@ -24,7 +24,7 @@ from pathlib import Path
 import pandas as pd
 
 from cyber_pipeline.utils.logging_utils import get_logger
-from cyber_pipeline.utils.paths import CLEANED, DATA, INTEGRATED, REPORTS
+from cyber_pipeline.utils.paths import ANALYTICAL, CLEANED, DATA, INTEGRATED, REPORTS
 
 log = get_logger("load_sqlite")
 DB_PATH = Path(os.environ.get("SQLITE_PATH", DATA / "warehouse" / "cyberattacks.db"))
@@ -40,6 +40,7 @@ KEYS = {
     "cleaned_wb_governance": ["iso3", "year"], "cleaned_vdem_country_year": ["iso3", "year"],
     "cleaned_gci_country_edition": ["iso3", "edition"], "cleaned_bgp_country_year": ["iso3", "year"],
     "country_year": ["iso3", "year"],
+    "features": ["iso3", "year"],
 }
 
 
@@ -53,7 +54,8 @@ def collect() -> dict[str, pd.DataFrame]:
     tables = {f"cleaned_{p.stem}": read(p) for p in sorted(CLEANED.glob("*.csv")) if not p.stem.startswith("_")}
     tables["country_year"] = read(INTEGRATED / "country_year.csv")
     for name, path in {"dq_results": REPORTS / "dq" / "dq_results.csv",
-                       "cleaning_log": CLEANED / "_cleaning_log.csv"}.items():
+                       "cleaning_log": CLEANED / "_cleaning_log.csv",
+                       "features": ANALYTICAL / "features.csv"}.items():
         if path.exists():
             tables[name] = read(path)
     return tables
