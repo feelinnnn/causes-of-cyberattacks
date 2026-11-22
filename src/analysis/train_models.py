@@ -12,10 +12,10 @@ Outputs:
       * `model_metrics`
       * `feature_importance`
       * `model_predictions`
-  - CSV files in `data/analytical/`:
-      * `data/analytical/model_metrics.csv`
-      * `data/analytical/feature_importance.csv`
-      * `data/analytical/model_predictions.csv`
+  - CSV files in `data/analytical/v1/`:
+      * `data/analytical/v1/model_metrics.csv`
+      * `data/analytical/v1/feature_importance.csv`
+      * `data/analytical/v1/model_predictions.csv`
 
 Run:
     PYTHONPATH=src python -m analysis.train_models
@@ -105,7 +105,7 @@ def load_features() -> pd.DataFrame:
             if "features" in tables:
                 log.info("Loaded 'features' table from SQLite %s", DB_PATH)
                 return pd.read_sql_query('SELECT * FROM "features"', con)
-    csv_path = ANALYTICAL / "features.csv"
+    csv_path = ANALYTICAL / "v1" / "features.csv"
     log.info("Loaded features from CSV %s", csv_path)
     return pd.read_csv(csv_path, keep_default_na=False, na_values=[""])
 
@@ -330,11 +330,12 @@ def save_results(
     df_imp: pd.DataFrame,
     df_preds: pd.DataFrame,
 ) -> None:
-    """Save metrics, feature importance, and predictions to CSV and SQLite."""
-    ANALYTICAL.mkdir(parents=True, exist_ok=True)
-    m_path = ANALYTICAL / "model_metrics.csv"
-    i_path = ANALYTICAL / "feature_importance.csv"
-    p_path = ANALYTICAL / "model_predictions.csv"
+    """Save metrics, feature importance, and predictions to CSV (`data/analytical/v1/`) and SQLite."""
+    v1_dir = ANALYTICAL / "v1"
+    v1_dir.mkdir(parents=True, exist_ok=True)
+    m_path = v1_dir / "model_metrics.csv"
+    i_path = v1_dir / "feature_importance.csv"
+    p_path = v1_dir / "model_predictions.csv"
 
     df_metrics.to_csv(m_path, index=False, encoding="utf-8")
     df_imp.to_csv(i_path, index=False, encoding="utf-8")

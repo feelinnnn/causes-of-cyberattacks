@@ -41,6 +41,7 @@ KEYS = {
     "cleaned_gci_country_edition": ["iso3", "edition"], "cleaned_bgp_country_year": ["iso3", "year"],
     "country_year": ["iso3", "year"],
     "features": ["iso3", "year"],
+    "features_v2": ["iso3", "year"],
 }
 
 
@@ -53,12 +54,27 @@ def read(path: Path) -> pd.DataFrame:
 def collect() -> dict[str, pd.DataFrame]:
     tables = {f"cleaned_{p.stem}": read(p) for p in sorted(CLEANED.glob("*.csv")) if not p.stem.startswith("_")}
     tables["country_year"] = read(INTEGRATED / "country_year.csv")
-    for name, path in {"dq_results": REPORTS / "dq" / "dq_results.csv",
-                       "cleaning_log": CLEANED / "_cleaning_log.csv",
-                       "features": ANALYTICAL / "features.csv",
-                       "model_metrics": ANALYTICAL / "model_metrics.csv",
-                       "feature_importance": ANALYTICAL / "feature_importance.csv",
-                       "model_predictions": ANALYTICAL / "model_predictions.csv"}.items():
+    extra_tables = {
+        "dq_results": REPORTS / "dq" / "dq_results.csv",
+        "cleaning_log": CLEANED / "_cleaning_log.csv",
+        # Batch ML V1
+        "features": ANALYTICAL / "v1" / "features.csv",
+        "model_metrics": ANALYTICAL / "v1" / "model_metrics.csv",
+        "feature_importance": ANALYTICAL / "v1" / "feature_importance.csv",
+        "model_predictions": ANALYTICAL / "v1" / "model_predictions.csv",
+        # Batch ML V2
+        "features_v2": ANALYTICAL / "v2" / "features.csv",
+        "model_metrics_v2": ANALYTICAL / "v2" / "model_metrics.csv",
+        "feature_importance_v2": ANALYTICAL / "v2" / "feature_importance.csv",
+        "model_predictions_v2": ANALYTICAL / "v2" / "model_predictions.csv",
+        # Online ML
+        "online_metrics_summary": ANALYTICAL / "online" / "online_metrics_summary.csv",
+        "online_replay_log": ANALYTICAL / "online" / "online_replay_log.csv",
+        "online_drift_events": ANALYTICAL / "online" / "online_drift_events.csv",
+        "online_coef_evolution": ANALYTICAL / "online" / "online_coef_evolution.csv",
+        "online_predictions": ANALYTICAL / "online" / "online_predictions.csv",
+    }
+    for name, path in extra_tables.items():
         if path.exists():
             tables[name] = read(path)
     return tables

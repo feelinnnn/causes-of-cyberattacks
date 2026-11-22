@@ -1,4 +1,4 @@
-"""Airflow DAG: raw files -> cleaned (one task per source) -> integrated -> data dictionary -> DQ -> SQLite.
+"""Airflow DAG: raw files (one check box per source) -> cleaned (one task per source) -> integrated -> data dictionary -> DQ -> SQLite.
 
 Run manually from the Airflow UI (schedule=None): the sources are yearly, so a daily
 schedule would only repeat the same work. Every step overwrites its own outputs, so
@@ -44,6 +44,49 @@ def ingest_worldbank() -> None:
         _fetch(script, needs_token=False)
 
 
+# ---- กล่องข้อมูลดิบ: 1 กล่องต่อ 1 แหล่งข้อมูล ----
+# เช็กว่าไฟล์ดิบที่ขั้น clean ต้องใช้มีอยู่จริงใน data/raw/ แล้วเขียนชื่อไฟล์ ขนาด จำนวนแถว
+# และวันที่แก้ล่าสุดลง log ถ้าขาดไฟล์ไหน กล่องจะเป็นสีแดงและหยุดก่อนขั้น clean
+# (API = ดึงด้วยสคริปต์ใน data/data_API/, manual = ดาวน์โหลดเองจากเว็บต้นทาง)
+RAW_FILES = {
+    "cloudflare": ["sourceA/cloudeflare_rader/cloudflare_radar_source_a.csv",
+                   "sourceA/cloudeflare_rader/cloudflare_attack_flow_pairs.csv",
+                   "sourceA/cloudeflare_rader/cloudflare_timeseries_weekly.csv"],          # API
+    "worldbank": ["sourceB/world_bank_econ_pred.csv",
+                  "sourceC/world_bank_digi_found.csv",
+                  "sourceE/world_bank_gov_wgi.csv"],                                       # API
+    "vdem": ["sourceE/V-Dem-CY-Full+Others-v16.csv"],                                      # manual
+    "gci": ["sourceE/GCI_2018_Raw.csv", "sourceE/GCI_2020_Raw.csv",
+            "sourceE/GCI_2024_Raw.csv"],                                                   # manual
+    "bgp": [f"sourceC/BGP/routeviews-rv2-{y}0701-*.pfx2as.gz" for y in (2022, 2023, 2024)]
+         + [f"sourceC/ip24prefix/{y}070*.as-org2info.txt.gz" for y in (2022, 2023, 2024)],  # manual (CAIDA)
+}
+
+
+# เช็กไฟล์ดิบของแหล่งข้อมูล 1 แหล่ง
+def check_raw(source: str) -> None:
+    import glob
+    import logging
+    log = logging.getLogger("airflow.task")
+    raw = os.path.join(PROJECT_ROOT, "data", "raw")
+    missing = []
+    for pattern in RAW_FILES[source]:
+        found = sorted(glob.glob(os.path.join(raw, pattern)))
+        if not found:
+            missing.append(pattern)
+            continue
+        for f in found:
+            size_mb = os.path.getsize(f) / 1e6
+            modified = datetime.fromtimestamp(os.path.getmtime(f)).strftime("%Y-%m-%d %H:%M")
+            rows = ""
+            if f.endswith(".csv"):
+                with open(f, "rb") as fh:
+                    rows = f", {sum(1 for _ in fh) - 1:,} rows"
+            log.info("OK  %s  (%.1f MB%s, modified %s)", os.path.relpath(f, raw), size_mb, rows, modified)
+    if missing:
+        raise AirflowFailException(f"Missing raw files for {source}: {missing}")
+
+
 # task: clean 1 source
 # ขั้น clean แหล่งข้อมูล 1 แหล่ง
 def clean(source: str) -> None:
@@ -78,6 +121,34 @@ def load_sqlite() -> None:
     main()
 
 
+# ---- ต่อจากฐานข้อมูล: ปัจจัย -> โมเดล V1, V2 -> Online ML (โค้ดของ Art) ----
+# ทุกขั้นเขียนตารางลง SQLite ไฟล์เดียวกัน (if_exists="replace") และเขียน CSV ลง data/analytical/
+
+# สร้างปัจจัยของกลุ่มวิเคราะห์ -> ตาราง features
+def features() -> None:
+    from cyber_pipeline.transform.features import main
+    main()
+
+
+# โมเดล V1 -> ตาราง model_metrics, feature_importance, model_predictions
+def train_models_v1() -> None:
+    from analysis.train_models import main
+    main()
+
+
+# โมเดล V2 -> ตาราง features_v2, model_metrics_v2, feature_importance_v2, model_predictions_v2
+def train_models_v2() -> None:
+    from analysis.train_models_v2 import main
+    main()
+
+
+# Online ML (replay รายเดือน 2022-2024) -> ตาราง online_metrics_summary, online_replay_log,
+# online_drift_events, online_coef_evolution, online_predictions
+def online_ml() -> None:
+    from analysis.online_ml import main
+    main()
+
+
 with DAG(
     dag_id="cyber_pipeline",
     description="Clean, join, document, check and load the cyberattack country-year data",
@@ -92,6 +163,15 @@ with DAG(
                               retries=3, retry_delay=timedelta(minutes=2))
     t_ing_wb = PythonOperator(task_id="ingest_worldbank", python_callable=ingest_worldbank,
                               retries=2, retry_delay=timedelta(minutes=1))
+
+    # 1b. One box per raw data source: checks the files the cleaning step reads are in data/raw/.
+    # Runs whether ingest ran or was skipped, so manual downloads get a box too.
+    def raw_task(source: str) -> PythonOperator:
+        return PythonOperator(task_id=f"raw_{source}", python_callable=check_raw,
+                              op_kwargs={"source": source}, trigger_rule="none_failed", retries=0)
+
+    t_raw_cf, t_raw_wb = raw_task("cloudflare"), raw_task("worldbank")   # API sources
+    t_raw_vdem, t_raw_gci, t_raw_bgp = raw_task("vdem"), raw_task("gci"), raw_task("bgp")  # manual
 
     # 2. Clean each source separately (runs whether ingest ran or was skipped).
     # สร้างกล่องขั้นตอน clean ของแต่ละแหล่งข้อมูล
@@ -110,11 +190,33 @@ with DAG(
     t_join = PythonOperator(task_id="join", python_callable=join)
     t_dict = PythonOperator(task_id="data_dictionary", python_callable=data_dictionary)
     t_dq = PythonOperator(task_id="dq_check", python_callable=dq_check, retries=0)
-    t_load = PythonOperator(task_id="load_sqlite", python_callable=load_sqlite)
+    t_load = PythonOperator(
+        task_id="load_clean_data_to_db", python_callable=load_sqlite,
+        doc_md="ยกข้อมูลที่ clean และผ่าน DQ แล้วเข้า DB (cleaned_*, country_year, dq_results, "
+               "cleaning_log, pipeline_runs). ขั้นวิเคราะห์หลังจากนี้บันทึกผลลง DB เอง")
 
-    # Later steps plug in after load_sqlite: eda_figures, hypothesis_tests, features, models.
-    [t_ing_cf, t_ing_wb] >> t_ref
-    t_ing_cf >> t_c_cf
-    t_ing_wb >> t_c_wb
+    # 3. Analysis (after the database is loaded). Run one after another: every step writes to
+    # the same SQLite file, so running them in parallel could give "database is locked".
+    t_feat = PythonOperator(task_id="features", python_callable=features,
+                              doc_md="บันทึกผลลง DB เอง: ตาราง features และ data/analytical/features.csv")
+    t_v1 = PythonOperator(task_id="train_models_v1", python_callable=train_models_v1,
+                              doc_md="บันทึกผลลง DB เอง: model_metrics, feature_importance, model_predictions",
+                          execution_timeout=timedelta(hours=1))
+    t_v2 = PythonOperator(task_id="train_models_v2", python_callable=train_models_v2,
+                              doc_md="บันทึกผลลง DB เอง: features_v2, model_metrics_v2, feature_importance_v2, model_predictions_v2",
+                          execution_timeout=timedelta(hours=1))
+    t_online = PythonOperator(task_id="online_ml", python_callable=online_ml,
+                              doc_md="บันทึกผลลง DB เอง: online_metrics_summary, online_replay_log, online_drift_events, online_coef_evolution, online_predictions",
+                              execution_timeout=timedelta(hours=1))
+
+    t_ing_cf >> t_raw_cf
+    t_ing_wb >> t_raw_wb
+    [t_raw_cf, t_raw_wb, t_raw_gci] >> t_ref        # the country list is built from these files
+    t_raw_cf >> t_c_cf
+    t_raw_wb >> t_c_wb
+    t_raw_bgp >> t_c_bgp
+    t_raw_vdem >> t_c_vdem
+    t_raw_gci >> t_c_gci
     t_ref >> [t_c_bgp, t_c_vdem, t_c_gci]
     [t_c_cf, t_c_wb, t_c_bgp, t_c_vdem, t_c_gci] >> t_join >> t_dict >> t_dq >> t_load
+    t_load >> t_feat >> t_v1 >> t_v2 >> t_online

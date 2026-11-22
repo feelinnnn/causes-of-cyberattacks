@@ -48,7 +48,7 @@ from sklearn.ensemble import (
 from sklearn.inspection import permutation_importance
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
-from sklearn.model_selection import GridSearchCV, GroupKFold, KFold, cross_validate
+from sklearn.model_selection import GridSearchCV, GroupKFold, cross_validate
 
 from cyber_pipeline.transform.features import _read_csv
 from cyber_pipeline.utils.logging_utils import get_logger
@@ -236,7 +236,91 @@ def build_features_v2() -> pd.DataFrame:
         df[lag_col] = df[lag_col].fillna(m_lag)
         df[f"{lag_col}_z"] = (df[lag_col] - m_lag) / s_lag
 
-    return df
+    # Select strictly clean engineered columns (zero NaNs, zero Infs, zero raw target leakage columns)
+    ordered_cols_v2 = [
+        # Keys, Split & Flags
+        "iso3",
+        "country_name",
+        "year",
+        "year_idx",
+        "split",
+        "is_target_ddos_censored",
+        "has_gci",
+        "has_vdem",
+        # Targets (Y)
+        "attack_intensity_log",
+        "attack_intensity_floored_log",
+        "origin_ddos_intensity_log",
+        "origin_l7_intensity_log",
+        # Clean Unscaled Predictors (for interpretability & interactive dashboard sliders)
+        "http_traffic_mean_log",
+        "population_log",
+        "internet_users_pct",
+        "broadband_subs_per_100",
+        "routed_asn_count_log",
+        "routed_prefix_count_log",
+        "ipv4_slash24_count_log",
+        "secure_servers_per_1m_log",
+        "ipv6_pct_log",
+        "tls_1_3_percent",
+        "bot_traffic_percent",
+        "gdp_per_capita_log",
+        "fdi_net_inflows_clipped",
+        "gci_score_100",
+        "v2smgovcapsec",
+        "v2smfordom",
+        "v2x_polyarchy",
+        "gov_effectiveness",
+        "rule_of_law",
+        "asn_per_capita_log",
+        "traffic_per_capita_log",
+        "ipv4_per_asn_log",
+        # Standardized Predictors (Z-score fitted strictly on Train 2022-2023)
+        "http_traffic_mean_log_z",
+        "population_log_z",
+        "internet_users_pct_z",
+        "broadband_subs_per_100_z",
+        "routed_asn_count_log_z",
+        "routed_prefix_count_log_z",
+        "ipv4_slash24_count_log_z",
+        "secure_servers_per_1m_log_z",
+        "ipv6_pct_log_z",
+        "tls_1_3_percent_z",
+        "bot_traffic_percent_z",
+        "gdp_per_capita_log_z",
+        "fdi_net_inflows_clipped_z",
+        "gci_score_100_z",
+        "gci_z_within_edition",
+        "v2smgovcapsec_z",
+        "v2smfordom_z",
+        "v2x_polyarchy_z",
+        "gov_effectiveness_z",
+        "rule_of_law_z",
+        "cyber_readiness_index_z",
+        "asn_per_capita_log_z",
+        "traffic_per_capita_log_z",
+        "ipv4_per_asn_log_z",
+        "unsecured_asn_z",
+        "unsecured_broadband_z",
+        # Lag-1 Target Features for Temporal Forecasting
+        "lag1_attack_intensity_log",
+        "lag1_attack_intensity_log_z",
+        "lag1_attack_floored_log",
+        "lag1_attack_floored_log_z",
+        "lag1_origin_ddos_log",
+        "lag1_origin_ddos_log_z",
+        "lag1_origin_l7_log",
+        "lag1_origin_l7_log_z",
+    ]
+    out = df[ordered_cols_v2].copy()
+
+    n_na = int(out.isna().sum().sum())
+    num_cols = out.select_dtypes(include=[np.number]).columns
+    n_inf = int(np.isinf(out[num_cols].values).sum())
+    if n_na > 0 or n_inf > 0:
+        raise ValueError(f"V2 engineered features contain invalid values: NaN={n_na}, Inf={n_inf}")
+
+    return out
 
 
 # ---------------------------------------------------------------------------

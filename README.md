@@ -5,6 +5,7 @@ cyberattacks, integrating 5 sources (cyber events, economy, digital infrastructu
 cyber exposure, national cybersecurity readiness). Associations only — no causal claims.
 
 - Folders & pipeline steps: [docs/architecture.md](docs/architecture.md)
+- Step-by-step Airflow guide (Thai): [docs/airflow_guide.md](docs/airflow_guide.md)
 
 ## Run the pipeline
 
