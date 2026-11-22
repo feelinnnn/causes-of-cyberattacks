@@ -6,3 +6,5 @@ numpy
 pyyaml
 requests
 pyspark  # version comes from the Airflow constraints file (3.5.4)
+scikit-learn
+scipy
