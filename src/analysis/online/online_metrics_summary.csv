@@ -1,0 +1,13 @@
+task_name,target_col,model_strategy,n_warmup_months,n_replay_months,n_total_predictions,overall_prequential_r2,overall_prequential_rmse,overall_prequential_mae,test_2024_r2,test_2024_rmse,test_2024_mae,n_drift_events,n_champion_promotions
+Target_DDoS_Intensity,monthly_target_ddos_log,1_Frozen_Baseline (No Update),6,30,4320,0.3157,1.8866,1.4853,0.3068,1.8853,1.4886,15,6
+Target_DDoS_Intensity,monthly_target_ddos_log,2_Challenger_Online_SGD (partial_fit),6,30,4320,0.8995,0.7229,0.4877,0.8993,0.7187,0.4686,15,6
+Target_DDoS_Intensity,monthly_target_ddos_log,3_Challenger_Sliding_Retrain (12m Window),6,30,4320,0.921,0.6408,0.4301,0.9238,0.6249,0.4033,15,6
+Target_DDoS_Intensity,monthly_target_ddos_log,4_Champion_Challenger_System (Active Champion),6,30,4320,0.9192,0.6482,0.4393,0.9238,0.6249,0.4033,15,6
+Origin_DDoS_Intensity,monthly_origin_ddos_log,1_Frozen_Baseline (No Update),6,30,4320,-0.0253,0.9992,0.7823,-0.1524,1.0487,0.818,13,14
+Origin_DDoS_Intensity,monthly_origin_ddos_log,2_Challenger_Online_SGD (partial_fit),6,30,4320,0.7932,0.4488,0.3236,0.7831,0.455,0.3162,13,14
+Origin_DDoS_Intensity,monthly_origin_ddos_log,3_Challenger_Sliding_Retrain (12m Window),6,30,4320,0.8135,0.4261,0.3144,0.8166,0.4183,0.3037,13,14
+Origin_DDoS_Intensity,monthly_origin_ddos_log,4_Champion_Challenger_System (Active Champion),6,30,4320,0.7989,0.4426,0.3252,0.7926,0.4448,0.3162,13,14
+Origin_L7_Intensity,monthly_origin_l7_log,1_Frozen_Baseline (No Update),6,30,4320,-0.0932,0.8965,0.699,-0.2063,0.8861,0.6948,13,12
+Origin_L7_Intensity,monthly_origin_l7_log,2_Challenger_Online_SGD (partial_fit),6,30,4320,0.7169,0.4562,0.3335,0.6895,0.4495,0.3201,13,12
+Origin_L7_Intensity,monthly_origin_l7_log,3_Challenger_Sliding_Retrain (12m Window),6,30,4320,0.7422,0.4353,0.324,0.7356,0.4148,0.3031,13,12
+Origin_L7_Intensity,monthly_origin_l7_log,4_Champion_Challenger_System (Active Champion),6,30,4320,0.7279,0.4473,0.3316,0.7122,0.4328,0.3117,13,12
