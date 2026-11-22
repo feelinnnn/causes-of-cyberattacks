@@ -67,7 +67,7 @@ flowchart TD
 1. **โมเดลที่ใช้แข่งขันในระบบ (4 บทบาท):**
    * 🧊 **`1_Frozen_Baseline` (โมเดลแช่แข็ง):** เทรนเฉพาะช่วง Warm-up (6 เดือนแรกของปี 2022) แล้ว **ไม่เคยอัปเดตอีกเลยตลอด 3 ปี** (มีไว้เป็นตัวเปรียบเทียบให้เห็นว่าถ้าไม่ทำ Online ML ความแม่นยำจะเสื่อมลงอย่างไรเมื่อเวลาผ่านไป)
    * ⚡ **`2_Challenger_Online_SGD` (True Online Learning — `.partial_fit()`):** ใช้ `StandardScaler().partial_fit()` คู่กับ `SGDRegressor(loss="huber", penalty="l2")` เรียก `.partial_fit()` อัปเดตค่าน้ำหนัก ($\beta$) ทุกๆ เดือนที่มีข้อมูลใหม่เข้ามา
-   * 🔄 **`3_Challenger_Sliding_Retrain` (Window Retrain Model):** โมเดลเส้นตรง/Ensemble ที่ทำการ Retrain ใหม่บนหน้าต่างข้อมูลล่าสุด (Sliding Window 12 เดือนล่าสุด = 1 รอบปี) เมื่อระบบตรวจพบ Drift หรือครบรอบการอัปเดต
+   * 🔄 **`3_Challenger_Sliding_Retrain` (Window Retrain Model):** โมเดลเส้นตรงที่ทำการ Retrain ใหม่บนหน้าต่างข้อมูลล่าสุด (Sliding Window 8 เดือนล่าสุด) เมื่อระบบตรวจพบ Drift หรือครบรอบการอัปเดต
    * 🏆 **`4_Active_Champion` (โมเดลแชมป์ที่ระบบเลือกใช้งานจริงในเดือนนั้น):** เริ่มต้นจากโมเดล Warm-up และจะถูกแทนที่ด้วย `Challenger` ตัวที่ทำผลงานดีกว่าตามกฎการชิงแชมป์
 
 2. **เกณฑ์การตรวจจับ Drift (`Drift Detection Rules`):**

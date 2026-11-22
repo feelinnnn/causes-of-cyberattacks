@@ -1,4 +1,4 @@
-"""Feature engineering pipeline: data/integrated/country_year.csv -> data/analytical/features.csv & SQLite.
+"""Feature engineering pipeline: data/integrated/country_year.csv -> data/analytical/v1/features.csv & SQLite.
 
 Implements the exact specification in docs/feature_engineering_plan.md:
 1. Causal forward-fill (2018 -> 2024) per country from cleaned World Bank tables (wb_econ, wb_digital).
@@ -256,12 +256,13 @@ def build_features() -> pd.DataFrame:
 
 
 def save_outputs(df: pd.DataFrame) -> None:
-    """Write features to data/analytical/*.csv and SQLite table `features`."""
-    ANALYTICAL.mkdir(parents=True, exist_ok=True)
+    """Write features to data/analytical/v1/*.csv and SQLite table `features`."""
+    v1_dir = ANALYTICAL / "v1"
+    v1_dir.mkdir(parents=True, exist_ok=True)
 
-    full_path = ANALYTICAL / "features.csv"
-    train_path = ANALYTICAL / "train_features.csv"
-    test_path = ANALYTICAL / "test_features.csv"
+    full_path = v1_dir / "features.csv"
+    train_path = v1_dir / "train_features.csv"
+    test_path = v1_dir / "test_features.csv"
 
     df.to_csv(full_path, index=False, encoding="utf-8")
     df[df["split"] == "train"].to_csv(train_path, index=False, encoding="utf-8")

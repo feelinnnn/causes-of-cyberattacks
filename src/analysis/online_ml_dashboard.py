@@ -25,9 +25,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from sklearn.ensemble import ExtraTreesRegressor, GradientBoostingRegressor, RandomForestRegressor, VotingRegressor
-from sklearn.linear_model import Ridge, SGDRegressor
-from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
-from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import Ridge
+from sklearn.metrics import root_mean_squared_error
 
 from analysis.train_models_v2 import ALL_FEATURES_V2_Z
 from cyber_pipeline.utils.paths import ANALYTICAL
@@ -269,7 +268,7 @@ def main() -> None:
                 x=history_logs["year_month"],
                 y=history_logs["retrain_rmse"],
                 mode="lines+markers",
-                name="🔄 Sliding Retrain (12m Window)",
+                name="🔄 Sliding Retrain (8m Window)",
                 line=dict(color="#f39c12", width=2),
             ))
             fig_rmse.add_trace(go.Scatter(

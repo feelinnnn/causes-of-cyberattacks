@@ -11,7 +11,7 @@ Implements the complete specification in `docs/online_ml_plan.md` with two key m
        (a) Predict month t with:
            - `1_Frozen_Baseline (No Update)`: trained only on Warm-up (never updated).
            - `2_Challenger_Online_SGD (partial_fit)`: true online linear model updated every month via `.partial_fit()`.
-           - `3_Challenger_Sliding_Retrain (12m Window)`: regularized linear model retrained on a sliding window.
+           - `3_Challenger_Sliding_Retrain (8m Window)`: regularized linear model retrained on a sliding window.
            - `4_Champion_Challenger_System (Active Champion)`: dynamically promoted & exponentially-weighted champion
              combining the leading challenger with online residual drift correction.
        (b) Reveal true label `y_true` of month t and compute step R2, RMSE, MAE.
@@ -56,6 +56,7 @@ V2_DIR = ANALYTICAL / "v2"
 DB_PATH = Path(os.environ.get("SQLITE_PATH", DATA / "warehouse" / "cyberattacks.db"))
 
 WARMUP_STEPS = 6  # Months 1..6 (Jan-Jun 2022) for initial training; Months 7..36 (30 months) for Online Replay
+SLIDING_WINDOW_MONTHS = 8  # 8-month sliding window for responsive retrain adaptation
 
 ONLINE_TASKS: list[tuple[str, str, str]] = [
     ("Target_DDoS_Intensity", "attack_intensity_floored_log", "monthly_target_ddos_log"),
@@ -127,10 +128,11 @@ def build_monthly_online_panel() -> pd.DataFrame:
         df_v2 = build_features_v2()
 
     wk = pd.read_csv(CLEANED / "cloudflare_timeseries_weekly.csv")
-    wk = wk[wk["scope"] == "country"].copy()
+    wk = wk[(wk["scope"] == "country") & (~wk["is_partial_week"].astype(bool))].copy()
     wk["dt"] = pd.to_datetime(wk["week_start"])
-    wk["year"] = wk["request_year"].astype(int)
+    wk["year"] = wk["dt"].dt.year.astype(int)
     wk["month"] = wk["dt"].dt.month.astype(int)
+    wk = wk[wk["year"].isin((2022, 2023, 2024))].copy()
 
     # Aggregate weekly trend_scaled into country x year x month
     m_agg = (
@@ -204,12 +206,35 @@ def build_monthly_online_panel() -> pd.DataFrame:
         panel["origin_l7_intensity_log_smooth"] + centered_log_dev * 0.95 + surge_dev * 0.80
     )
 
-    drop_temp = [f"{c}_smooth" for c in interp_cols]
-    panel = panel.drop(columns=drop_temp).sort_values(["iso3", "step_idx"]).reset_index(drop=True).copy()
+    clean_panel_cols = [
+        "iso3",
+        "country_name",
+        "year",
+        "month",
+        "step_idx",
+        "year_month",
+        "month_sin",
+        "month_cos",
+        "monthly_trend_mean",
+        "monthly_trend_max",
+        "monthly_trend_std",
+        "monthly_trend_ratio",
+        "monthly_target_ddos_log",
+        "monthly_origin_ddos_log",
+        "monthly_origin_l7_log",
+    ] + STRUCTURAL_FEATURES
+    panel = panel[clean_panel_cols].sort_values(["iso3", "step_idx"]).reset_index(drop=True).copy()
+
+    n_na = int(panel.isna().sum().sum())
+    num_cols = panel.select_dtypes(include=[np.number]).columns
+    n_inf = int(np.isinf(panel[num_cols].values).sum())
+    if n_na > 0 or n_inf > 0:
+        raise ValueError(f"Monthly online panel contains invalid values: NaN={n_na}, Inf={n_inf}")
 
     log.info(
-        "Constructed smooth monthly online panel: %d rows (%d countries x %d months)",
+        "Constructed clean smooth monthly online panel: %d rows x %d cols (%d countries x %d months, NaN=0)",
         len(panel),
+        panel.shape[1],
         panel["iso3"].nunique(),
         panel["step_idx"].nunique(),
     )
@@ -430,7 +455,7 @@ def run_online_simulation_for_task(
 
         retrain_triggered = bool(drift_detected or (step % 3 == 0))
         if retrain_triggered:
-            win_start = max(2, step - 7)  # 8-month sliding window for responsive adaptation
+            win_start = max(2, step - (SLIDING_WINDOW_MONTHS - 1))  # 8-month sliding window for responsive adaptation
             win_df = df[(df["step_idx"] >= win_start) & (df["step_idx"] <= step)].copy()
             retrain_scaler = StandardScaler()
             X_win = retrain_scaler.fit_transform(win_df[feature_cols].values)
@@ -558,7 +583,7 @@ def run_online_simulation_for_task(
     for m_label, col_p in [
         ("1_Frozen_Baseline (No Update)", "y_pred_frozen"),
         ("2_Challenger_Online_SGD (partial_fit)", "y_pred_online_sgd"),
-        ("3_Challenger_Sliding_Retrain (12m Window)", "y_pred_retrain"),
+        (f"3_Challenger_Sliding_Retrain ({SLIDING_WINDOW_MONTHS}m Window)", "y_pred_retrain"),
         ("4_Champion_Challenger_System (Active Champion)", "y_pred_champion"),
     ]:
         yp_all = pred_df_task[col_p].values
